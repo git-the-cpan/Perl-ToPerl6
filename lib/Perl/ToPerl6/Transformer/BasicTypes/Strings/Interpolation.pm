@@ -12,7 +12,7 @@ use Perl::ToPerl6::Utils::PPI qw{ set_string };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 #-----------------------------------------------------------------------------
 
@@ -30,59 +30,87 @@ sub applies_to           {
 }
 
 #-----------------------------------------------------------------------------
+#
+# Some more cases get folded away here (hee.)
+# \U foo \L\E bar \E - 'bar' will get altered here.
+# \U foo \L$x\E bar \E - 'bar' will *not* get altered here,
+#                        even if $x is empty.
+# \U foo \Lxxx\E bar \E - 'bar' will *not* get altered here,
+#
+# So, \L..\E affects the rest of the string only if the contents
+# are empty. So it's effectively as if it never was there.
+# Get rid of it.
+#
+sub casefold {
+    my ($self, $residue) = @_;
+
+    my @tokens;
+    my @split = grep { $_ ne '' } split /( \\[luEFLQU] )/x, $residue;
+    for ( my $i = 0; $i < @split; $i++ ) {
+        my ($v, $la1) = @split[$i,$i+1];
+        if ( $v =~ m< ^ \\[FLU] $ >x and
+             $la1 and $la1 eq '\\E' ) {
+            $i+=2;
+        }
+        else {
+            push @tokens, $v;
+        }
+    }
+    return @tokens;
+}
+
 sub tokenize_variables {
     my ($self, $string) = @_;
+    my $full_string = $string;
 
     my @tokens;
 my $iter = 100;
     while ( $string ) {
 unless ( --$iter  ) {
-    die "Congratulations, you've broken string interpolation. Please report this message, along with the test file you wer using to the author.";
+    die "Congratulations, you've broken string interpolation. Please report this message, along with the test file you were using to the author: <<$full_string>>";
 }
         my $residue;
-        if ( $string =~ s{ ^ ( [^\$\@]+ ) }{}x ) {
-            $residue = $1;
 
-            while ( $residue and $residue =~ / \\ $ /x ) {
-                $string =~ s{ (.) }{}x;
-                $residue .= $1;
-                if ( $string =~ s{ ^ ( [^\$\@]+ ) }{}x ) {
+        # '${foo}', '@{foo}' is an interpolated value.
+        #
+        if ( $string =~ s< ^ ( [\$\@] \{ [^}]+ \} ) ><>x ) {
+            push @tokens, $1;
+        }
+        elsif ( $string =~ s< ^ ( \\ c . ) ><>x or
+                $string =~ s< ^ ( [\$\@] (?: \\ | \s ) ) ><>x ) {
+            if ( @tokens ) {
+                $tokens[-1] .= $1;
+            }
+            else {
+                push @tokens, $1;
+            }
+        }
+        elsif ( $string =~ s< ^ ( [^\$\@]+ ) ><>x ) {
+            $residue .= $1;
+
+            while ( $residue and $residue =~ m< \\ $ >x ) {
+                if ( $string =~ s< ^ ( \$\@ ) ><>x ) {
+                    $residue .= $1;
+                }
+                $string =~ s< (.) ><>x;
+                $residue .= $1 if $1;
+                if ( $string =~ s< ^ ( [^\$\@]+ ) ><>x ) {
                     $residue .= $1;
                 }
                 else {
                     last;
                 }
             }
-            my @split = grep { $_ ne '' } split /( \\[luEFLQU] )/x, $residue;
-
-            # Some more cases get folded away here (hee.)
-            # \U foo \L\E bar \E - 'bar' will get altered here.
-            # \U foo \L$x\E bar \E - 'bar' will *not* get altered here,
-            #                        even if $x is empty.
-            # \U foo \Lxxx\E bar \E - 'bar' will *not* get altered here,
-            #
-            # So, \L..\E affects the rest of the string only if the contents
-            # are empty. So it's effectively as if it never was there.
-            # Get rid of it.
-            #
-            for ( my $i = 0; $i < @split; $i++ ) {
-                my ($v, $la1) = @split[$i,$i+1];
-                if ( $v =~ / ^ \\[FLU] $ /x and
-                     $la1 and $la1 eq '\\E' ) {
-                    $i+=2;
-                }
-                else {
-                    push @tokens, $v;
-                }
-            }
+            push @tokens, $self->casefold($residue);
         }
-        elsif ( $string =~ m{ ^ [\$\@] }x ) {
+        elsif ( $string =~ m< ^ [\$\@] >x ) {
             my ( $var_name, $remainder, $prefix ) =
                  extract_variable( $string );
             push @tokens, $var_name;
             $string = $remainder;
         }
         else {
+warn "XXX failed\n";
         }
     }
 
@@ -94,6 +122,11 @@ sub transform {
 
     my $old_string = $elem->string;
     my $new_string;
+
+    if ( index( $old_string, '@{[' ) >= 0 ) {
+warn "Interpolating perl code.";
+        return;
+    }
 
     # Save the delimiters for later. Since they surrounded the original Perl5
     # string, we can be certain that if we use these for the Perl6 equivalent
@@ -198,15 +231,19 @@ sub transform {
     # So, rather than having to retain case settings, we can simply stop the
     # lc(..) block after the first...
     #
-    my $collected;
-#    my @manip;
+
+    my $new_content;
     for ( my $i = 0; $i < @tokens; $i++ ) {
         my ( $v, $la1 ) = @tokens[$i,$i+1];
 
-        if ( index( $v, '$' ) != 0 and index( $v, '@' ) != 0 ) {
+        if ( index( $v, '$' ) != 0 and
+             index( $v, '@' ) != 0 ) {
             $v =~ s< { ><\\{>gx;
             $v =~ s< } ><\\}>gx;
         }
+        $new_content .= $v;
+    }
+
 #        if ( $v eq '\\l' ) {
 #        }
 #        elsif ( $v eq '\\u' ) {
@@ -254,16 +291,8 @@ sub transform {
 #        elsif ( $v =~ / ^ ( \$ | \@ ) /x ) {
 #            $collected .= $v;
 #        }
-#        else {
-            $collected .= $v;
-#        }
-    }
-#    if ( @manip == 1 ) {
-#        $collected .= $end_delimiter . ')}';
-#    }
-    $old_string = $collected;
 
-    set_string($elem,$old_string);
+    set_string($elem,$new_content);
 
     return $self->transformation( $DESC, $EXPL, $elem );
 }

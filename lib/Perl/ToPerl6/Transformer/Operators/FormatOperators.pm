@@ -10,7 +10,7 @@ use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_operator };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 #-----------------------------------------------------------------------------
 
@@ -120,12 +120,12 @@ $elem->set_content('fff XXX');
         $elem->set_content( $map{$old_content} );
     }
 
-    # Remove whitespace from around '->'
-    #
     if ( $elem->content eq '.' ) {
         $elem->next_sibling->remove if
+            $elem->next_sibling and
             $elem->next_sibling->isa('PPI::Token::Whitespace');
         $elem->previous_sibling->remove if
+            $elem->previous_sibling and
             $elem->previous_sibling->isa('PPI::Token::Whitespace');
     }
 

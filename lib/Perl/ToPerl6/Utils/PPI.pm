@@ -10,7 +10,7 @@ use Scalar::Util qw< blessed readonly looks_like_number >;
 
 use Exporter 'import';
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 #-----------------------------------------------------------------------------
 
@@ -161,6 +161,7 @@ sub is_pragma {
 
 sub set_string {
     my ($elem, $string) = @_;
+    $string = '' unless $string;
 
     my $content = $elem->content;
     if ($content =~ m/ ^ ['"] /x ) {

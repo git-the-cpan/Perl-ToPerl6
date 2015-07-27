@@ -94,3 +94,17 @@ qq{\$a]|[\$\{a\}]|[$a{a}]|[\$a\{'a'\}]|[\$a\{"a"\}}
 qq{$a\l|\l${\ua}\l|\l$a{\La\E}\l|\l$a{\Q'a'\E}\l|\l$a{"a"}}
 ##-->
 qq{$a\l|\l${\ua}\l|\l$a{\La\E}\l|\l$a{\Q'a'\E}\l|\l$a{"a"}}
+## name: regressions
+return "$weeks @{[$weeks == 1 ? q(week) : q(weeks)]}";
+$s .= sprintf(" @ %$f/s (n=$n)",$n/($elapsed)) if $n && $elapsed;
+is( "$@$!$,$/$\$^W", "1\n0", 'DB::save() should reset punctuation vars' );
+"my \$E; { local \$@; }"
+is("\N{NULL}", "\c@", 'Verify "\N{NULL}" eq "\c@"');
+sub stringify { "${$_[0]}" }
+##-->
+return "$weeks @{[$weeks == 1 ? q(week) : q(weeks)]}";
+$s .= sprintf(" @ %$f/s (n=$n)",$n/($elapsed)) if $n && $elapsed;
+is( "$@$!$,$/$\$^W", "1\n0", 'DB::save() should reset punctuation vars' );
+"my \$E; \{ local \$@; \}"
+is("\c[NULL]", "\c@", 'Verify "\N{NULL}" eq "\c@"');
+sub stringify { "${$_[0]}" }
