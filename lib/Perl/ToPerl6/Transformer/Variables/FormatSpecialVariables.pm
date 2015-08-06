@@ -9,7 +9,7 @@ use Perl::ToPerl6::Utils qw{ :characters :severities };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -96,6 +96,7 @@ my %map = (
     '@INC'             => '@*INC', # XXX remember $INC[...]
     '$SIG{__WARN__}'   => '$*ON_WARN', # XXX Note it's not the actual %SIG
     '$SIG{__DIE__}'    => '$*ON_DIE', # XXX Note it's not the actual %SIG
+    '$@'               => '$!', # XXX May not be as appropriate.
 );
 
 #-----------------------------------------------------------------------------

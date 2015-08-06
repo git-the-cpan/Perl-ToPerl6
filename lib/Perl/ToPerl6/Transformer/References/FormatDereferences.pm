@@ -9,7 +9,7 @@ use Perl::ToPerl6::Utils qw{ :characters :severities };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -19,12 +19,14 @@ Readonly::Scalar my $EXPL =>
 
 #-----------------------------------------------------------------------------
 
+sub run_after            { return 'Operators::FormatOperators' }
 sub supported_parameters { return () }
 sub default_severity     { return $SEVERITY_HIGHEST }
 sub default_themes       { return qw(core bugs)     }
 sub applies_to           {
     return sub {
         $_[1]->isa('PPI::Token::Cast') and
+        $_[1]->next_sibling and
         $_[1]->next_sibling->isa('PPI::Structure::Block') and
         $_[1]->next_sibling->start->content eq '{' and
         $_[1]->next_sibling->finish->content eq '}'

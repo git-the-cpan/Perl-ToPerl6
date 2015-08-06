@@ -10,7 +10,7 @@ use Perl::ToPerl6::Utils::PPI qw{ is_ppi_statement_compound };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -20,6 +20,7 @@ Readonly::Scalar my $EXPL =>
 
 #-----------------------------------------------------------------------------
 
+sub run_after            { return 'Operators::FormatOperators' }
 sub supported_parameters { return () }
 sub default_severity     { return $SEVERITY_HIGHEST }
 sub default_themes       { return qw(core bugs)     }

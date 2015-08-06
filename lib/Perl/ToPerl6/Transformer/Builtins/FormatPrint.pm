@@ -10,7 +10,7 @@ use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_word make_ppi_structure_list };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -24,6 +24,20 @@ my %map = (
 );
 
 #-----------------------------------------------------------------------------
+
+# Our first usage of the topological sorting.
+#
+# The change 'print FOO "stuff"' --> 'FOO.print("stuff")' rewrites the Perl5
+# code to Perl6, so it has to be run *after* the Perl5-Perl6 operator
+# conversion has taken place.
+#
+# It might even be better to rephrase this in terms of:
+#
+#   "Run this test only after resetting the content of PPI::Token::Operators"
+#   but that feel dangerous and fragile.
+#
+
+sub run_after            { 'Operators::FormatOperators' }
 
 sub supported_parameters { return () }
 sub default_severity     { return $SEVERITY_HIGHEST }
@@ -79,6 +93,8 @@ sub _is_almost_end_of_print_expression {
 
 sub transform {
     my ($self, $elem, $doc) = @_;
+    return unless $elem->snext_sibling and
+                  $elem->snext_sibling->snext_sibling;
 
     my $token = $elem->snext_sibling->snext_sibling;
 

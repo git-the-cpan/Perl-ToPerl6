@@ -9,7 +9,7 @@ use Perl::ToPerl6::Utils qw{ :characters :severities };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -30,6 +30,7 @@ sub default_themes       { return qw(core bugs)     }
 sub applies_to           {
     return sub {
         $_[1]->isa('PPI::Token::Prototype') and
+        $_[1]->sprevious_sibling and
         ( exists $map{$_[1]->sprevious_sibling->content} or
           exists $map{$_[1]->sprevious_sibling->sprevious_sibling->content} )
     }

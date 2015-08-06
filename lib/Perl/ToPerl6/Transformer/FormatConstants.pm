@@ -9,7 +9,7 @@ use Perl::ToPerl6::Utils qw{ :characters :severities };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -69,6 +69,7 @@ sub transform {
     elsif ( $head and
             $head->isa('PPI::Token::Word') and
             $head->content eq 'use' and
+            $head->snext_sibling and
             $head->snext_sibling->isa('PPI::Token::Word') and
             $head->snext_sibling->content eq 'constant' ) {
 

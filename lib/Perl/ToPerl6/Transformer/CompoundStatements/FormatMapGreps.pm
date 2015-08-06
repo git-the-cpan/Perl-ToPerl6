@@ -10,7 +10,7 @@ use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_word make_ppi_structure_block };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -41,12 +41,20 @@ sub applies_to           {
 
 sub transform {
     my ($self, $elem, $doc) = @_;
+
+#
+# XXX This is worrisome, as this test should not need to be done.
+# XXX The applies_to() method above implies that $elem should have an
+# XXX snext_sibling by the time it gets here.
+#
+    return unless $elem->snext_sibling;
     my $token = $elem->snext_sibling;
 
     if ( $token->isa('PPI::Structure::Block') and
          $token->start eq '{' and
          $token->finish eq '}' ) {
-        return if $token->snext_sibling->isa('PPI::Token::Operator') and
+        return if $token->snext_sibling and
+                  $token->snext_sibling->isa('PPI::Token::Operator') and
                   $token->snext_sibling->content eq ',';
         my $comma = PPI::Token::Operator->new(',');
         $token->insert_after( $comma );

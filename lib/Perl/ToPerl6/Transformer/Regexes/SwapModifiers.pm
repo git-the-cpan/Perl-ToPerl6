@@ -9,7 +9,7 @@ use Perl::ToPerl6::Utils qw{ :characters :severities };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -37,9 +37,14 @@ sub transform {
     my $num_modifiers = keys %{ $elem->get_modifiers };
     my $modifiers =
         substr( $elem->content, -$num_modifiers, $num_modifiers, '' );
+    my $old_modifiers = $modifiers;
+
+    # 'g' gets replaced with 'c', 'c' is removed? As is 'o'?
+    #
+    $modifiers =~ s{[sgo]}{}g; # XXX
 
     for ( @{ $elem->{sections} } ) {
-        $_->{position} += $num_modifiers + 3;
+        $_->{position} += length($modifiers) + 3;
     }
 
     my $new_content = $elem->content;
@@ -57,7 +62,7 @@ sub transform {
         $new_content =~ s{^(m|s|y|tr)}{$1:P5};
     }
     $elem->{operator} = $1;
-    $new_content =~ s{$modifiers$}{};
+    $new_content =~ s{$old_modifiers$}{};
 
     $elem->set_content($new_content);
 
