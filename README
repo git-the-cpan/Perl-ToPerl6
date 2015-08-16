@@ -15,8 +15,8 @@ DESCRIPTION
     Perl::ToPerl6::Transformer modules that attempt to enforce various
     coding guidelines. Most Transformer modules are based on Damian Conway's
     book Perl Best Practices. However, Perl::ToPerl6 is not limited to PBP
-    and will even support Policies that contradict Conway. You can enable,
-    disable, and customize those Polices through the Perl::ToPerl6
+    and will even support Transformers that contradict Conway. You can
+    enable, disable, and customize those Polices through the Perl::ToPerl6
     interface. You can also create new Transformer modules that suit your
     own tastes.
 
@@ -62,7 +62,7 @@ CONSTRUCTOR
         directory. Alternatively, you can set the "PERLMOGRIFY" environment
         variable to point to a file in another location. If a configuration
         file can't be found, or if $FILE is an empty string, then all
-        Policies will be loaded with their default configuration. See
+        Transformers will be loaded with their default configuration. See
         "CONFIGURATION" for more information.
 
         -severity is the minimum severity level. Only Transformer modules
@@ -92,11 +92,11 @@ CONSTRUCTOR
         on down to a "brutal" mogrification which reports even the most
         minor transformations.
 
-        -theme is special expression that determines which Policies to apply
-        based on their respective themes. For example, the following would
-        load only Policies that have a 'bugs' AND 'pbp' theme:
+        -theme is special expression that determines which Transformers to
+        apply based on their respective themes. For example, the following
+        would load only Transformers that have a 'bugs' AND 'core' theme:
 
-          my $mogrify = Perl::ToPerl6->new( -theme => 'bugs && pbp' );
+          my $mogrify = Perl::ToPerl6->new( -theme => 'bugs && core' );
 
         Unless the "-severity" option is explicitly given, setting "-theme"
         silently causes the "-severity" to be set to 1. You can set the
@@ -130,11 +130,12 @@ CONSTRUCTOR
         "-exclude" takes precedence over "-include" when a Transformer
         matches both patterns.
 
-        -single-policy is a string "PATTERN". Only one policy that matches
-        "m/$PATTERN/ixms" will be used. Policies that do not match will be
-        excluded. This option has precedence over the "-severity", "-theme",
-        "-include", "-exclude", and "-only" options. You can set the default
-        value for this option in your .perlmogrifyrc file.
+        -single-transformer is a string "PATTERN". Only one transformer that
+        matches "m/$PATTERN/ixms" will be used. Transformers that do not
+        match will be excluded. This option has precedence over the
+        "-severity", "-theme", "-include", "-exclude", and "-only" options.
+        You can set the default value for this option in your .perlmogrifyrc
+        file.
 
         -top is the maximum number of Transformations to return when ranked
         by their severity levels. This must be a positive integer.
@@ -145,10 +146,11 @@ CONSTRUCTOR
         file.
 
         -only is a boolean value. If set to a true value, Perl::ToPerl6 will
-        only choose from Policies that are mentioned in the user's profile.
-        If set to a false value (which is the default), then Perl::ToPerl6
-        chooses from all the Policies that it finds at your site. You can
-        set the default value for this option in your .perlmogrifyrc file.
+        only choose from Transformers that are mentioned in the user's
+        profile. If set to a false value (which is the default), then
+        Perl::ToPerl6 chooses from all the Transformers that it finds at
+        your site. You can set the default value for this option in your
+        .perlmogrifyrc file.
 
         -profile-strictness is an enumerated value, one of
         "$PROFILE_STRICTNESS_WARN" in Perl::ToPerl6::Utils::Constants (the
@@ -159,7 +161,7 @@ CONSTRUCTOR
         Perl::ToPerl6 will make certain warnings about problems found in a
         .perlmogrifyrc or file specified via the -profile option fatal. For
         example, Perl::ToPerl6 normally only "warn"s about profiles
-        referring to non-existent Policies, but this value makes this
+        referring to non-existent Transformers, but this value makes this
         situation fatal. Correspondingly, "$PROFILE_STRICTNESS_QUIET" in
         Perl::ToPerl6::Utils::Constants makes Perl::ToPerl6 shut up about
         these things.
@@ -177,8 +179,8 @@ CONSTRUCTOR
         explanation of format specifications. You can set the default value
         for this option in your .perlmogrifyrc file.
 
-        -unsafe directs Perl::ToPerl6 to allow the use of Policies that are
-        marked as "unsafe" by the author. Such transformers may compile
+        -unsafe directs Perl::ToPerl6 to allow the use of Transformers that
+        are marked as "unsafe" by the author. Such transformers may compile
         untrusted code or do other nefarious things.
 
         -color and -pager are not used by Perl::ToPerl6 but is provided for
@@ -200,24 +202,25 @@ CONSTRUCTOR
 METHODS
     "transform( $source_code )"
         Runs the $source_code through the Perl::ToPerl6 engine using all the
-        Policies that have been loaded into this engine. If $source_code is
-        a scalar reference, then it is treated as a string of actual Perl
+        Transformers that have been loaded into this engine. If $source_code
+        is a scalar reference, then it is treated as a string of actual Perl
         code. If $source_code is a reference to an instance of
         PPI::Document, then that instance is used directly. Otherwise, it is
         treated as a path to a local file containing Perl code. This method
         returns a list of Perl::ToPerl6::Transformation objects for each
-        transformation of the loaded Policies. The list is sorted in the
+        transformation of the loaded Transformers. The list is sorted in the
         order that the Transformations appear in the code. If there are no
         transformations, this method returns an empty list.
 
-    "apply_transform( -policy => $policy_name, -params => \%param_hash )"
+    "apply_transform( -transformer => $transformer_name, -params =>
+    \%param_hash )"
         Creates a Transformer object and loads it into this ToPerl6. If the
         object cannot be instantiated, it will throw a fatal exception.
         Otherwise, it returns a reference to this ToPerl6.
 
-        -policy is the name of a Perl::ToPerl6::Transformer subclass module.
-        The 'Perl::ToPerl6::Transformer' portion of the name can be omitted
-        for brevity. This argument is required.
+        -transformer is the name of a Perl::ToPerl6::Transformer subclass
+        module. The 'Perl::ToPerl6::Transformer' portion of the name can be
+        omitted for brevity. This argument is required.
 
         -params is an optional reference to a hash of Transformer
         parameters. The contents of this hash reference will be passed into
@@ -307,7 +310,7 @@ CONFIGURATION
         arg2 = value2
 
     "Perl::ToPerl6::Transformer::Category::TransformerName" is the full name
-    of a module that implements the policy. The Transformer modules
+    of a module that implements the transformer. The Transformer modules
     distributed with Perl::ToPerl6 have been grouped into categories
     according to the table of contents in Damian Conway's book Perl Best
     Practices. For brevity, you can omit the 'Perl::ToPerl6::Transformer'
@@ -345,10 +348,10 @@ CONFIGURATION
 
     "maximum_transformations_per_document" limits the number of
     Transformations the Transformer will return for a given document. Some
-    Policies have a default limit; see the documentation for the individual
-    Policies to see whether there is one. To force a Transformer to not have
-    a limit, specify "no_limit" or the empty string for the value of this
-    parameter.
+    Transformers have a default limit; see the documentation for the
+    individual Transformers to see whether there is one. To force a
+    Transformer to not have a limit, specify "no_limit" or the empty string
+    for the value of this parameter.
 
     The remaining key-value pairs are configuration parameters that will be
     passed into the constructor for that Transformer. The constructors for
@@ -400,7 +403,7 @@ CONFIGURATION
         [-ValuesAndExpressions::ProhibitMagicNumbers]
 
         #--------------------------------------------------------------
-        # For all other Policies, I accept the default severity,
+        # For all other Transformers, I accept the default severity,
         # so no additional configuration is required for them.
 
     For additional configuration examples, see the perlmogrifyrc file that
@@ -417,45 +420,43 @@ THE POLICIES
     for all Transformer modules that match the regex "m/PATTERN/ixms"
 
     There are a number of distributions of additional transformers on CPAN.
-    If Perl::ToPerl6 doesn't contain a policy that you want, some one may
-    have already written it. See the "SEE ALSO" section below for a list of
-    some of these distributions.
+    If Perl::ToPerl6 doesn't contain a transformer that you want, some one
+    may have already written it. See the "SEE ALSO" section below for a list
+    of some of these distributions.
 
 POLICY THEMES
     Each Transformer is defined with one or more "themes". Themes can be
-    used to create arbitrary groups of Policies. They are intended to
+    used to create arbitrary groups of Transformers. They are intended to
     provide an alternative mechanism for selecting your preferred set of
-    Policies. For example, you may wish disable a certain subset of Policies
-    when analyzing test programs. Conversely, you may wish to enable only a
-    specific subset of Policies when analyzing modules.
+    Transformers. For example, you may wish disable a certain subset of
+    Transformers when analyzing test programs. Conversely, you may wish to
+    enable only a specific subset of Transformers when analyzing modules.
 
-    The Policies that ship with Perl::ToPerl6 have been broken into the
+    The Transformers that ship with Perl::ToPerl6 have been broken into the
     following themes. This is just our attempt to provide some basic logical
     groupings. You are free to invent new themes that suit your needs.
 
         THEME             DESCRIPTION
         --------------------------------------------------------------------------
         core              All transformers that ship with Perl::ToPerl6
-        pbp               Policies that come directly from "Perl Best Practices"
-        bugs              Policies that that prevent or reveal bugs
-        certrec           Policies that CERT recommends
-        certrule          Policies that CERT considers rules
-        maintenance       Policies that affect the long-term health of the code
-        cosmetic          Policies that only have a superficial effect
-        complexity        Policies that specificaly relate to code complexity
-        security          Policies that relate to security issues
-        tests             Policies that are specific to test programs
+        pbp               Transformers that come directly from "Perl Best Practices"
+        bugs              Transformers that that prevent or reveal bugs
+        maintenance       Transformers that affect the long-term health of the code
+        cosmetic          Transformers that only have a superficial effect
+        complexity        Transformers that specificaly relate to code complexity
+        security          Transformers that relate to security issues
+        tests             Transformers that are specific to test programs
 
     Any Transformer may fit into multiple themes. Say "perlmogrify -list" to
-    get a listing of all available Policies and the themes that are
+    get a listing of all available Transformers and the themes that are
     associated with each one. You can also change the theme for any
     Transformer in your .perlmogrifyrc file. See the "CONFIGURATION" section
     for more information about that.
 
     Using the "-theme" option, you can create an arbitrarily complex rule
-    that determines which Policies will be loaded. Precedence is the same as
-    regular Perl code, and you can use parentheses to enforce precedence as
-    well. Supported operators are:
+    that determines which Transformers will be loaded. Precedence is the
+    same as regular Perl code, and you can use parentheses to enforce
+    precedence as well. Supported operators are:
 
         Operator    Alternative    Example
         -----------------------------------------------------------------
@@ -464,7 +465,7 @@ POLICY THEMES
         !           not            'pbp && ! (portability || complexity)'
 
     Theme names are case-insensitive. If the "-theme" is set to an empty
-    string, then it evaluates as true all Policies.
+    string, then it evaluates as true all Transformers.
 
 BENDING THE RULES
     Perl::ToPerl6 takes a hard-line approach to your code: either you comply
@@ -500,10 +501,10 @@ BENDING THE RULES
     perlmogrify to ignore the ""## no mogrify"" annotations, use the
     "--force" option.
 
-    A bare "## no mogrify" annotation disables all the active Policies. If
-    you wish to disable only specific Policies, add a list of Transformer
-    names as arguments, just as you would for the "no strict" or "no
-    warnings" pragmas. For example, this would disable the
+    A bare "## no mogrify" annotation disables all the active Transformers.
+    If you wish to disable only specific Transformers, add a list of
+    Transformer names as arguments, just as you would for the "no strict" or
+    "no warnings" pragmas. For example, this would disable the
     "ProhibitEmptyQuotes" and "ProhibitPostfixControls" transformers until
     the end of the block or until the next "## use mogrify" annotation
     (whichever comes first):
@@ -521,7 +522,7 @@ BENDING THE RULES
 
     Since the Transformer names are matched against the "## no mogrify"
     arguments as regular expressions, you can abbreviate the Transformer
-    names or disable an entire family of Policies in one shot like this:
+    names or disable an entire family of Transformers in one shot like this:
 
         ## no mogrify (NamingConventions)
 
@@ -533,12 +534,12 @@ BENDING THE RULES
 
     The argument list must be enclosed in parentheses and must contain one
     or more comma-separated barewords (e.g. don't use quotes). The "## no
-    mogrify" annotations can be nested, and Policies named by an inner
+    mogrify" annotations can be nested, and Transformers named by an inner
     annotation will be disabled along with those already disabled an outer
     annotation.
 
-    Some Policies like "Subroutines::ProhibitExcessComplexity" apply to an
-    entire block of code. In those cases, the "## no mogrify" annotation
+    Some Transformers like "Subroutines::ProhibitExcessComplexity" apply to
+    an entire block of code. In those cases, the "## no mogrify" annotation
     must appear on the line where the transformation is reported. For
     example:
 
@@ -546,13 +547,13 @@ BENDING THE RULES
             # Your code here...
         }
 
-    Policies such as "Documentation::RequirePodSections" apply to the entire
-    document, in which case transformations are reported at line 1.
+    Transformers such as "Documentation::RequirePodSections" apply to the
+    entire document, in which case transformations are reported at line 1.
 
     Use this feature wisely. "## no mogrify" annotations should be used in
     the smallest possible scope, or only on individual lines of code. And
-    you should always be as specific as possible about which Policies you
-    want to disable (i.e. never use a bare "## no mogrify"). If
+    you should always be as specific as possible about which Transformers
+    you want to disable (i.e. never use a bare "## no mogrify"). If
     Perl::ToPerl6 complains about your code, try and find a compliant
     solution before resorting to this feature.
 
@@ -562,30 +563,21 @@ THE Perl::ToPerl6 PHILOSOPHY
     practices. Our primary goal is not to dictate what those practices are,
     but rather, to implement the practices discovered by others. Ultimately,
     you make the rules -- Perl::ToPerl6 is merely a tool for encouraging
-    consistency. If there is a policy that you think is important or that we
-    have overlooked, we would be very grateful for contributions, or you can
-    simply load your own private set of transformers into Perl::ToPerl6.
+    consistency. If there is a transformer that you think is important or
+    that we have overlooked, we would be very grateful for contributions, or
+    you can simply load your own private set of transformers into
+    Perl::ToPerl6.
 
 EXTENDING THE MOGRIFIER
     The modular design of Perl::ToPerl6 is intended to facilitate the
-    addition of new Policies. You'll need to have some understanding of PPI,
-    but most Transformer modules are pretty straightforward and only require
-    about 20 lines of code. Please see the Perl::ToPerl6::DEVELOPER file
-    included in this distribution for a step-by-step demonstration of how to
-    create new Transformer modules.
+    addition of new Transformers. You'll need to have some understanding of
+    PPI, but most Transformer modules are pretty straightforward and only
+    require about 20 lines of code. Please see the Perl::ToPerl6::DEVELOPER
+    file included in this distribution for a step-by-step demonstration of
+    how to create new Transformer modules.
 
-    If you develop any new Transformer modules, feel free to send them to
-    "<team@perlmogrify.com>" and I'll be happy to consider adding them into
-    the Perl::ToPerl6 distribution. Or if you would like to work on the
-    Perl::ToPerl6 project directly, you can fork our repository at
-    "/github.com/Perl- ToPerl6/Perl- ToPerl6.git" in http:.
-
-    The Perl::ToPerl6 team is also available for hire. If your organization
-    has its own coding standards, we can create custom Policies to enforce
-    your local guidelines. Or if your code base is prone to a particular
-    defect pattern, we can design Policies that will help you catch those
-    costly defects before they go into production. To discuss your needs
-    with the Perl::ToPerl6 team, just contact "<team@perlmogrify.com>".
+    If you develop any Transformer modules, feel free to add a pull request
+    on GitHub, <http://github.com/drforr/Perl-Mogrify.git>.
 
 PREREQUISITES
     Perl::ToPerl6 requires the following modules:
@@ -645,33 +637,6 @@ CONTACTING THE DEVELOPMENT TEAM
     <irc://irc.perl.org/#perlmogrify> and you can follow Perl::ToPerl6 on
     Twitter, at <https://twitter.com/perlmogrify>.
 
-SEE ALSO
-    There are a number of distributions of additional Policies available. A
-    few are listed here:
-
-    Perl::ToPerl6::More
-
-    Perl::ToPerl6::Bangs
-
-    Perl::ToPerl6::Lax
-
-    Perl::ToPerl6::StricterSubs
-
-    Perl::ToPerl6::Swift
-
-    Perl::ToPerl6::Tics
-
-    These distributions enable you to use Perl::ToPerl6 in your unit tests:
-
-    Test::Perl::ToPerl6
-
-    Test::Perl::ToPerl6::Progressive
-
-    There is also a distribution that will install all the Perl::ToPerl6
-    related modules known to the development team:
-
-    Task::Perl::ToPerl6
-
 BUGS
     Scrutinizing Perl code is hard for humans, let alone machines. If you
     find any bugs, particularly false-positives or false-negatives from a
@@ -699,11 +664,13 @@ CREDITS
     <http://www.perlfoundation.org/april_1_2007_new_grant_awards>
 
 AUTHOR
+    Jeffrey Goff <drforr@pobox.com>
+
+AUTHOR Emeritus
     Jeffrey Ryan Thalhammer <jeff@imaginative-software.com>
 
 COPYRIGHT
-    Copyright (c) 2005-2013 Imaginative Software Systems. All rights
-    reserved.
+    Copyright (c) 2015 Jeffrey Goff. All rights reserved.
 
     This program is free software; you can redistribute it and/or modify it
     under the same terms as Perl itself. The full text of this license can

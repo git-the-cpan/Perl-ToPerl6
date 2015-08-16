@@ -20,15 +20,15 @@ use Exception::Class ();  # Must be after P::C::Exception::*
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '1.116';
+our $VERSION = '0.031';
 
 #-----------------------------------------------------------------------------
 
-our @EXPORT_OK = qw< generate_policy_summary >;
+our @EXPORT_OK = qw< generate_transformer_summary >;
 
 #-----------------------------------------------------------------------------
 
-sub generate_policy_summary {
+sub generate_transformer_summary {
 
     print "\n\nGenerating Perl::ToPerl6::TransformerSummary.\n";
 
@@ -37,10 +37,10 @@ sub generate_policy_summary {
       Perl::ToPerl6::Config->new(-profile => $EMPTY, -severity => 1, -theme => 'core');
 
     my @transformers = $configuration->all_transformers_enabled_or_not();
-    my $policy_summary = 'lib/Perl/ToPerl6/TransformerSummary.pod';
+    my $transformer_summary = 'lib/Perl/ToPerl6/TransformerSummary.pod';
 
-    open my $pod_file, '>', $policy_summary
-      or confess "Could not open $policy_summary: $ERRNO";
+    open my $pod_file, '>', $transformer_summary
+      or confess "Could not open $transformer_summary: $ERRNO";
 
     print {$pod_file} <<'END_HEADER';
 
@@ -52,15 +52,11 @@ Perl::ToPerl6::TransformerSummary - Descriptions of the Transformer modules incl
 =head1 DESCRIPTION
 
 The following Transformer modules are distributed with Perl::ToPerl6. (There are
-additional Policies that can be found in add-on distributions.)  The Transformer
-modules have been categorized according to the table of contents in Damian
-Conway's book B<Perl Best Practices>. Since most coding standards take the
-form "do this..." or "don't do that...", I have adopted the convention of
-naming each module C<RequireSomething> or C<ProhibitSomething>.  Each Transformer
-is listed here with its default severity.  If you don't agree with the default
-severity, you can change it in your F<.perlmogrifyrc> file (try C<perlmogrify
---profile-proto> for a starting version).  See the documentation of each
-module for its specific details.
+additional Transformers that can be found in add-on distributions.) Each
+Transformer is listed here with its default severity.  If you don't agree with
+the default severity, you can change it in your F<.perlmogrifyrc> file (try
+C<perlmogrify --profile-proto> for a starting version).  See the documentation
+of each module for its specific details.
 
 
 =head1 POLICIES
@@ -76,16 +72,16 @@ my $format = <<'END_POLICY';
 END_POLICY
 
 eval {
-    foreach my $policy (@transformers) {
-        my $module_abstract = $policy->get_raw_abstract();
+    foreach my $transformer (@transformers) {
+        my $module_abstract = $transformer->get_raw_abstract();
 
         printf
             {$pod_file}
             $format,
-            $policy->get_short_name(),
-            $policy->get_long_name(),
-            $module_abstract,
-            $policy->default_severity();
+            $transformer->get_short_name(),
+            $transformer->get_long_name(),
+            $module_abstract || '',
+            $transformer->default_severity();
     }
 
     1;
@@ -131,11 +127,11 @@ can be found in the LICENSE file included with this module.
 END_FOOTER
 
 
-    close $pod_file or confess "Could not close $policy_summary: $ERRNO";
+    close $pod_file or confess "Could not close $transformer_summary: $ERRNO";
 
     print "Done.\n\n";
 
-    return $policy_summary;
+    return $transformer_summary;
 
 }
 
@@ -159,23 +155,23 @@ Perl::ToPerl6::TransformerSummaryGenerator - Create F<TransformerSummary.pod> fi
 
 This module contains subroutines for generating the
 L<Perl::ToPerl6::TransformerSummary> POD file.  This file contains a brief
-summary of all the Policies that ship with L<Perl::ToPerl6>.  These
+summary of all the Transformers that ship with L<Perl::ToPerl6>.  These
 summaries are extracted from the C<NAME> section of the POD for each
 Transformer module.
 
 This library should be used at author-time to generate the
 F<TransformerSummary.pod> file B<before> releasing a new distribution.  See
-also the C<policysummary> action in L<Perl::ToPerl6::Module::Build>.
+also the C<transformersummary> action in L<Perl::ToPerl6::Module::Build>.
 
 
 =head1 IMPORTABLE SUBROUTINES
 
 =over
 
-=item C<generate_policy_summary()>
+=item C<generate_transformer_summary()>
 
 Generates the F<TransformerSummary.pod> file which contains a brief summary of all
-the Policies in this distro.  Returns the relative path this file.  Unlike
+the Transformers in this distro.  Returns the relative path this file.  Unlike
 most of the other subroutines here, this subroutine should be used when
 creating a distribution, not when building or installing an existing
 distribution.

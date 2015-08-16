@@ -4,6 +4,7 @@ use 5.006001;
 
 use strict;
 use warnings;
+use Test::More tests => 12;
 
 use Test::Perl::ToPerl6::Transformer qw< transform_ok >;
 ### name: Check single layer of casefolding
@@ -117,6 +118,7 @@ is("\N{NULL}", "\c@", 'Verify "\N{NULL}" eq "\c@"')
 "\<leftop='$name(s?)': $name $2 $name\>(s?) "
 "$code$argcode($1..)"
 "\<leftop='$name(..$1)': $name $2 $name\>(..$1) "
+#"push \@{\$thisparser->{deferred}}, sub $code;"
 ##-->
 "$weeks @{[$weeks == 1 ? q(week) : q(weeks)]}"
 " @ %$f/s \(n=$n\)"
@@ -132,3 +134,4 @@ is("\c[NULL]", "\c@", 'Verify "\N{NULL}" eq "\c@"')
 "\<leftop='$name\(s?\)': $name $2 $name\>\(s?\) "
 "$code$argcode\($1..\)"
 "\<leftop='$name\(..$1\)': $name $2 $name\>\(..$1\) "
+#"push \@{\$thisparser->{deferred}}, sub $code;"

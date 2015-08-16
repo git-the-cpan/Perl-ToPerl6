@@ -91,7 +91,7 @@
    "provides" : {
       "Perl::ToPerl6" : {
          "file" : "lib/Perl/ToPerl6.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Annotation" : {
          "file" : "lib/Perl/ToPerl6/Annotation.pm",
@@ -115,71 +115,71 @@
       },
       "Perl::ToPerl6::Exception::AggregateConfiguration" : {
          "file" : "lib/Perl/ToPerl6/Exception/AggregateConfiguration.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Generic" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Generic.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::NonExistentTransformer" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/NonExistentTransformer.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option::Global" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option/Global.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option::Global::ExtraParameter" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option/Global/ExtraParameter.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option::Global::ParameterValue" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option/Global/ParameterValue.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option::Transformer" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option/Transformer.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option::Transformer::ExtraParameter" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option/Transformer/ExtraParameter.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Configuration::Option::Transformer::ParameterValue" : {
          "file" : "lib/Perl/ToPerl6/Exception/Configuration/Option/Transformer/ParameterValue.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Fatal" : {
          "file" : "lib/Perl/ToPerl6/Exception/Fatal.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Fatal::Generic" : {
          "file" : "lib/Perl/ToPerl6/Exception/Fatal/Generic.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Fatal::Internal" : {
          "file" : "lib/Perl/ToPerl6/Exception/Fatal/Internal.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Fatal::TransformerDefinition" : {
          "file" : "lib/Perl/ToPerl6/Exception/Fatal/TransformerDefinition.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::IO" : {
          "file" : "lib/Perl/ToPerl6/Exception/IO.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Exception::Parse" : {
          "file" : "lib/Perl/ToPerl6/Exception/Parse.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::OptionsProcessor" : {
          "file" : "lib/Perl/ToPerl6/OptionsProcessor.pm",
@@ -215,7 +215,7 @@
       },
       "Perl::ToPerl6::Transformer::Arrays::FormatArrayQws" : {
          "file" : "lib/Perl/ToPerl6/Transformer/Arrays/FormatArrayQws.pm",
-         "version" : "0.03"
+         "version" : "0.031"
       },
       "Perl::ToPerl6::Transformer::BasicTypes::Integers::FormatBinaryLiterals" : {
          "file" : "lib/Perl/ToPerl6/Transformer/BasicTypes/Integers/FormatBinaryLiterals.pm",
@@ -251,6 +251,10 @@
       },
       "Perl::ToPerl6::Transformer::BasicTypes::Strings::Interpolation" : {
          "file" : "lib/Perl/ToPerl6/Transformer/BasicTypes/Strings/Interpolation.pm",
+         "version" : "0.03"
+      },
+      "Perl::ToPerl6::Transformer::Builtins::AddWhitespace" : {
+         "file" : "lib/Perl/ToPerl6/Transformer/Builtins/AddWhitespace.pm",
          "version" : "0.03"
       },
       "Perl::ToPerl6::Transformer::Builtins::FormatPrint" : {
@@ -289,20 +293,12 @@
          "file" : "lib/Perl/ToPerl6/Transformer/CompoundStatements/SwapForArguments.pm",
          "version" : "0.03"
       },
-      "Perl::ToPerl6::Transformer::FormatConstants" : {
-         "file" : "lib/Perl/ToPerl6/Transformer/FormatConstants.pm",
-         "version" : "0.03"
-      },
       "Perl::ToPerl6::Transformer::FormatSpecialLiterals" : {
          "file" : "lib/Perl/ToPerl6/Transformer/FormatSpecialLiterals.pm",
          "version" : "0.03"
       },
       "Perl::ToPerl6::Transformer::Instances::Creation" : {
          "file" : "lib/Perl/ToPerl6/Transformer/Instances/Creation.pm",
-         "version" : "0.03"
-      },
-      "Perl::ToPerl6::Transformer::Operators::AddWhitespace" : {
-         "file" : "lib/Perl/ToPerl6/Transformer/Operators/AddWhitespace.pm",
          "version" : "0.03"
       },
       "Perl::ToPerl6::Transformer::Operators::FormatOperators" : {
@@ -458,7 +454,7 @@
          "url" : "git://github.com/drforr/Perl-ToPerl6.git"
       }
    },
-   "version" : "0.03",
+   "version" : "0.031",
    "x_authority" : "cpan:JGOFF",
    "x_serialization_backend" : "JSON::PP version 2.27203"
 }

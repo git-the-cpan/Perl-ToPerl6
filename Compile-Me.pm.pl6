@@ -3,7 +3,1680 @@
 
 
 
-class Parse::RecDescent::LineCounter {
+class Parse::RecDescent {
+
+use Carp:from<Perl5>;
+
+
+my $ERRORS = 0;
+
+our $VERSION = '1.967009';
+$VERSION = eval $VERSION;
+$_FILENAME=$?FILE;
+
+# BUILDING A PARSER
+
+my $nextnamespace = "namespace000001";
+
+sub _nextnamespace
+{
+    return "Parse::RecDescent::" ~ $nextnamespace++;
+}
+
+# ARGS ARE: $class, $grammar, $compiling, $namespace
+sub new 
+{
+    my $class = ref(@_[0]) || @_[0];
+    local $Parse::RecDescent::compiling = @_[2];
+    my $name_space_name = defined @_[3]
+        ?? "Parse::RecDescent::"~@_[3]
+        !! _nextnamespace();
+    my $self =
+    {
+        "rules"     => {},
+        "namespace" => $name_space_name,
+        "startcode" => '',
+        "localvars" => '',
+        "_AUTOACTION" => Any,
+        "_AUTOTREE"   => Any,
+
+        # Precompiled parsers used to set _precompiled, but that
+        # wasn't present in some versions of Parse::RecDescent used to
+        # build precompiled parsers.  Instead, set a new
+        # _not_precompiled flag, which is remove from future
+        # Precompiled parsers at build time.
+        "_not_precompiled" => 1,
+    };
+
+
+    if ($::RD_AUTOACTION) {
+        my $sourcecode = $::RD_AUTOACTION;
+        $sourcecode = "\{ $sourcecode \}"
+            unless $sourcecode ~~ m:P5/\A\s*\{.*\}\s*\Z/;
+        $self.{'_check'}{'itempos'} =
+            $sourcecode ~~ m:P5/\@itempos\b|\$itempos\s*\[/;
+        $self.{'_AUTOACTION'}
+            = new Parse::RecDescent::Action($sourcecode,0,-1)
+    }
+
+    bless $self, $class;
+    return $self.Replace(@_[1])
+}
+
+sub Compile {
+    die "Compilation of Parse::RecDescent grammars not yet implemented\n";
+}
+
+sub DESTROY {
+    my ($self) = @_;
+    my $namespace = $self.{'namespace'};
+    $namespace ~~ s:P5/Parse::RecDescent:://;
+    if ($self.{'_not_precompiled'}) {
+        # BEGIN WORKAROUND
+        # Perl has a bug that creates a circular reference between
+        # @ISA and that variable's stash:
+        #   https://rt.perl.org/rt3/Ticket/Display.html?id=92708
+        # Emptying the array before deleting the stash seems to
+        # prevent the leak.  Once the ticket above has been resolved,
+        # these two lines can be removed.
+        
+        @($self.{'namespace'} ~ '::ISA') = ();
+        # END WORKAROUND
+
+        # Some grammars may contain circular references between rules,
+        # such as:
+        #   a: 'ID' | b
+        #   b: '(' a ')'
+        # Unless these references are broken, the subs stay around on
+        # stash deletion below.  Iterate through the stash entries and
+        # for each defined code reference, set it to reference sub {}
+        # instead.
+        {
+            local $*WARNINGS; # avoid 'sub redefined' warnings.
+            my $blank_sub = sub {};
+            while (my ($name, $glob) = each %("Parse::RecDescent::$namespace\::")) {
+                *$glob = $blank_sub if defined &$glob;
+            }
+        }
+
+        # Delete the namespace's stash
+        delete %Parse::RecDescent::{'$namespace'~'::'};
+    }
+}
+
+# BUILDING A GRAMMAR....
+
+# ARGS ARE: $self, $grammar, $isimplicit, $isleftop
+sub Replace 
+{
+    # set $replace = 1 for _generate
+    splice(@_, 2, 0, 1);
+
+    return _generate(@_);
+}
+
+# ARGS ARE: $self, $grammar, $isimplicit, $isleftop
+sub Extend 
+{
+    # set $replace = 0 for _generate
+    splice(@_, 2, 0, 0);
+
+    return _generate(@_);
+}
+
+sub _no_rule 
+{
+    _error("Ruleless $_[0] at start of grammar.",@_[1]);
+    my $desc = @_[2] ?? "\"$_[2]\"" !! "";
+    _hint("You need to define a rule for the $_[0] $desc
+           to be part of.");
+}
+
+my $NEGLOOKAHEAD    = '\G(\s*\.\.\.\!)';
+my $POSLOOKAHEAD    = '\G(\s*\.\.\.)';
+my $RULE        = '\G\s*(\w+)[ \t]*:';
+my $PROD        = '\G\s*([|])';
+my $TOKEN       = q{\G\s*/((\\\\/|\\\\\\\\|[^/])*)/([cgimsox]*)};
+my $MTOKEN      = q{\G\s*(m\s*[^\w\s])};
+my $LITERAL     = q{\G\s*'((\\\\['\\\\]|[^'])*)'};
+my $INTERPLIT       = q{\G\s*"((\\\\["\\\\]|[^"])*)"};
+my $SUBRULE     = '\G\s*(\w+)';
+my $MATCHRULE       = '\G(\s*<matchrule:)';
+my $SIMPLEPAT       = '((\\s+/[^/\\\\]*(?:\\\\.[^/\\\\]*)*/)?)';
+my $OPTIONAL        = '\G\((\?)'~$SIMPLEPAT~'\)';
+my $ANY         = '\G\((s\?)'~$SIMPLEPAT~'\)';
+my $MANY        = '\G\((s|\.\.)'~$SIMPLEPAT~'\)';
+my $EXACTLY     = '\G\(([1-9]\d*)'~$SIMPLEPAT~'\)';
+my $BETWEEN     = '\G\((\d+)\.\.([1-9]\d*)'~$SIMPLEPAT~'\)';
+my $ATLEAST     = '\G\((\d+)\.\.'~$SIMPLEPAT~'\)';
+my $ATMOST      = '\G\(\.\.([1-9]\d*)'~$SIMPLEPAT~'\)';
+my $BADREP      = '\G\((-?\d+)?\.\.(-?\d+)?'~$SIMPLEPAT~'\)';
+my $ACTION      = '\G\s*\{';
+my $IMPLICITSUBRULE = '\G\s*\(';
+my $COMMENT     = '\G\s*(#.*)';
+my $COMMITMK        = '\G\s*<commit>';
+my $UNCOMMITMK      = '\G\s*<uncommit>';
+my $QUOTELIKEMK     = '\G\s*<perl_quotelike>';
+my $CODEBLOCKMK     = '\G\s*<perl_codeblock(?:\s+([][()<>{}]+))?>';
+my $VARIABLEMK      = '\G\s*<perl_variable>';
+my $NOCHECKMK       = '\G\s*<nocheck>';
+my $AUTOACTIONPATMK = '\G\s*<autoaction:';
+my $AUTOTREEMK      = '\G\s*<autotree(?::\s*([\w:]+)\s*)?>';
+my $AUTOSTUBMK      = '\G\s*<autostub>';
+my $AUTORULEMK      = '\G\s*<autorule:(.*?)>';
+my $REJECTMK        = '\G\s*<reject>';
+my $CONDREJECTMK    = '\G\s*<reject:';
+my $SCOREMK     = '\G\s*<score:';
+my $AUTOSCOREMK     = '\G\s*<autoscore:';
+my $SKIPMK      = '\G\s*<skip:';
+my $OPMK        = '\G\s*<(left|right)op(?:=(\'.*?\'))?:';
+my $ENDDIRECTIVEMK  = '\G\s*>';
+my $RESYNCMK        = '\G\s*<resync>';
+my $RESYNCPATMK     = '\G\s*<resync:';
+my $RULEVARPATMK    = '\G\s*<rulevar:';
+my $DEFERPATMK      = '\G\s*<defer:';
+my $TOKENPATMK      = '\G\s*<token:';
+my $AUTOERRORMK     = '\G\s*<error(\??)>';
+my $MSGERRORMK      = '\G\s*<error(\??):';
+my $NOCHECK     = '\G\s*<nocheck>';
+my $WARNMK      = '\G\s*<warn((?::\s*(\d+)\s*)?)>';
+my $HINTMK      = '\G\s*<hint>';
+my $TRACEBUILDMK    = '\G\s*<trace_build((?::\s*(\d+)\s*)?)>';
+my $TRACEPARSEMK    = '\G\s*<trace_parse((?::\s*(\d+)\s*)?)>';
+my $UNCOMMITPROD    = $PROD~'\s*<uncommit';
+my $ERRORPROD       = $PROD~'\s*<error';
+my $LONECOLON       = '\G\s*:';
+my $OTHER       = '\G\s*([^\s]+)';
+
+my @lines = 0;
+
+sub _generate
+{
+    my ($self, $grammar, $replace, $isimplicit, $isleftop) = (@_, 0);
+
+    my $aftererror = 0;
+    my $lookahead = 0;
+    my $lookaheadspec = "";
+    my $must_pop_lines;
+    if (?^ @lines[*-1]) {
+        push @lines, _linecount($grammar) ;
+        $must_pop_lines = 1;
+    }
+    $self.{'_check'}{'itempos'} = ($grammar ~~ m:P5/\@itempos\b|\$itempos\s*\[/)
+        unless $self.{'_check'}{'itempos'};
+    for (qw (thisoffset thiscolumn prevline prevoffset prevcolumn))
+    {
+        $self.{'_check'}{'$_'} =
+            ($grammar ~~ m:P5/\$$_/) || $self.{'_check'}{'itempos'}
+                unless $self.{'_check'}{'$_'};
+    }
+    my $line;
+
+    my $rule = Any;
+    my $prod = Any;
+    my $item = Any;
+    my $lastgreedy = '';
+    pos $grammar = 0;
+    study $grammar;
+
+    local $::RD_HINT  = $::RD_HINT;
+    local $::RD_WARN  = $::RD_WARN;
+    local $::RD_TRACE = $::RD_TRACE;
+    local $::RD_CHECK = $::RD_CHECK;
+
+    while (pos $grammar < length $grammar)
+    {
+        $line = @lines[*-1] - _linecount($grammar) + 1;
+        my $commitonly;
+        my $code = "";
+        my @components = ();
+        if ($grammar ~~ m:c:P5/$COMMENT/)
+        {
+            _parse("a comment",0,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+            next;
+        }
+        elsif ($grammar ~~ m:c:P5/$NEGLOOKAHEAD/)
+        {
+            _parse("a negative lookahead",$aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+            $lookahead = $lookahead ?? -$lookahead !! -1;
+            $lookaheadspec ~= $0;
+            next;   # SKIP LOOKAHEAD RESET AT END OF while LOOP
+        }
+        elsif ($grammar ~~ m:c:P5/$POSLOOKAHEAD/)
+        {
+            _parse("a positive lookahead",$aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+            $lookahead = $lookahead ?? $lookahead !! 1;
+            $lookaheadspec ~= $0;
+            next;   # SKIP LOOKAHEAD RESET AT END OF while LOOP
+        }
+        elsif ($grammar ~~ m:c:P5/(?=$ACTION)/
+            and do { ($code) = extract_codeblock($grammar); $code })
+        {
+            _parse("an action", $aftererror, $line, $code);
+            $item = new Parse::RecDescent::Action($code,$lookahead,$line);
+            $prod and $prod.additem($item)
+                  or  $self._addstartcode($code);
+        }
+        elsif ($grammar ~~ m:c:P5/(?=$IMPLICITSUBRULE)/
+            and do { ($code) = extract_codeblock($grammar,'{([',Any,'(',1);
+                $code })
+        {
+            $code ~~ s:c:P5/\A\s*\(|\)\Z//;
+            _parse("an implicit subrule", $aftererror, $line,
+                "\( $code \)");
+            my $implicit = $rule.nextimplicit;
+            return Any
+                if ?^$self._generate("$implicit : $code",$replace,1);
+            my $pos = pos $grammar;
+            substr($grammar,$pos,0,$implicit);
+            pos $grammar = $pos;;
+        }
+        elsif ($grammar ~~ m:c:P5/$ENDDIRECTIVEMK/)
+        {
+
+        # EXTRACT TRAILING REPETITION SPECIFIER (IF ANY)
+
+            my ($minrep,$maxrep) = (1,$MAXREP);
+            if ($grammar ~~ m:c:P5/\G[(]/)
+            {
+                pos($grammar)--;
+
+                if ($grammar ~~ m:c:P5/$OPTIONAL/)
+                    { ($minrep, $maxrep) = (0,1) }
+                elsif ($grammar ~~ m:c:P5/$ANY/)
+                    { $minrep = 0 }
+                elsif ($grammar ~~ m:c:P5/$EXACTLY/)
+                    { ($minrep, $maxrep) = ($0,$0) }
+                elsif ($grammar ~~ m:c:P5/$BETWEEN/)
+                    { ($minrep, $maxrep) = ($0,$1) }
+                elsif ($grammar ~~ m:c:P5/$ATLEAST/)
+                    { $minrep = $0 }
+                elsif ($grammar ~~ m:c:P5/$ATMOST/)
+                    { $maxrep = $0 }
+                elsif ($grammar ~~ m:c:P5/$MANY/)
+                    { }
+                elsif ($grammar ~~ m:c:P5/$BADREP/)
+                {
+                    _parse("an invalid repetition specifier", 0,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                    _error("Incorrect specification of a repeated directive",
+                           $line);
+                    _hint("Repeated directives cannot have
+                           a maximum repetition of zero, nor can they have
+                           negative components in their ranges.");
+                }
+            }
+
+            $prod && $prod.enddirective($line,$minrep,$maxrep);
+        }
+        elsif ($grammar ~~ m:c:P5/\G\s*<[^m]/)
+        {
+            pos($grammar)-=2;
+
+            if ($grammar ~~ m:c:P5/$OPMK/)
+            {
+                # $DB::single=1;
+                _parse("a $1-associative operator directive", $aftererror, $line, "\<$1op:...\>");
+                $prod.adddirective($0, $line,$1||'');
+            }
+            elsif ($grammar ~~ m:c:P5/$UNCOMMITMK/)
+            {
+                _parse("an uncommit marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Directive('$commit=0;1',
+                                  $lookahead,$line,"\<uncommit\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<uncommit\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/$QUOTELIKEMK/)
+            {
+                _parse("an perl quotelike marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Directive(
+                    'my ($match,@res);
+                     ($match,$text,undef,@res) =
+                          Text::Balanced::extract_quotelike($text,$skip);
+                      $match ? \@res : undef;
+                    ', $lookahead,$line,"\<perl_quotelike\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<perl_quotelike\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/$CODEBLOCKMK/)
+            {
+                my $outer = $0||"\{\}";
+                _parse("an perl codeblock marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Directive(
+                    'Text::Balanced::extract_codeblock($text,undef,$skip,\''~$outer~'\');
+                    ', $lookahead,$line,"\<perl_codeblock\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<perl_codeblock\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/$VARIABLEMK/)
+            {
+                _parse("an perl variable marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Directive(
+                    'Text::Balanced::extract_variable($text,$skip);
+                    ', $lookahead,$line,"\<perl_variable\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<perl_variable\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/$NOCHECKMK/)
+            {
+                _parse("a disable checking marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                if ($rule)
+                {
+                    _error("\<nocheck\> directive not at start of grammar", $line);
+                    _hint("The \<nocheck\> directive can only
+                           be specified at the start of a
+                           grammar \(before the first rule
+                           is defined.");
+                }
+                else
+                {
+                    local $::RD_CHECK = 1;
+                }
+            }
+            elsif ($grammar ~~ m:c:P5/$AUTOSTUBMK/)
+            {
+                _parse("an autostub marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $::RD_AUTOSTUB = "";
+            }
+            elsif ($grammar ~~ m:c:P5/$AUTORULEMK/)
+            {
+                _parse("an autorule marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $::RD_AUTOSTUB = $0;
+            }
+            elsif ($grammar ~~ m:c:P5/$AUTOTREEMK/)
+            {
+                my $base = defined($0) ?? $0 !! "";
+                my $current_match = substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]);
+                $base ~= "::" if $base && $base !~~ m:P5/::$/;
+                _parse("an autotree marker", $aftererror,$line, $current_match);
+                if ($rule)
+                {
+                    _error("\<autotree\> directive not at start of grammar", $line);
+                    _hint("The \<autotree\> directive can only
+                           be specified at the start of a
+                           grammar \(before the first rule
+                           is defined.");
+                }
+                else
+                {
+                    Any $self.{'_AUTOACTION'};
+                    $self.{'_AUTOTREE'}{'NODE'}
+                        = new Parse::RecDescent::Action(q ({bless \%item, ')~$base~q ('.$item[0]}),0,-1);
+                    $self.{'_AUTOTREE'}{'TERMINAL'}
+                        = new Parse::RecDescent::Action(q ({bless {__VALUE__=>$item[1]}, ')~$base~q ('.$item[0]}),0,-1);
+                }
+            }
+
+            elsif ($grammar ~~ m:c:P5/$REJECTMK/)
+            {
+                _parse("an reject marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::UncondReject($lookahead,$line,"\<reject\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<reject\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$CONDREJECTMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                      $code })
+            {
+                _parse("a \(conditional\) reject marker", $aftererror,$line, $code );
+                $code ~~ m:s:P5/\A\s*<reject:(.*)>\Z/;
+                my $cond = $0;
+                $item = new Parse::RecDescent::Directive(
+                          "\($1\) ? undef : 1", $lookahead,$line,"\<reject:$cond\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<reject:$cond\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$SCOREMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                      $code })
+            {
+                _parse("a score marker", $aftererror,$line, $code );
+                $code ~~ m:s:P5/\A\s*<score:(.*)>\Z/;
+                $prod and $prod.addscore($0, $lookahead, $line)
+                      or  _no_rule($code,$line);
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$AUTOSCOREMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                     $code;
+                       } )
+            {
+                _parse("an autoscore specifier", $aftererror,$line,$code);
+                $code ~~ m:s:P5/\A\s*<autoscore:(.*)>\Z/;
+
+                $rule and $rule.addautoscore($0,$self)
+                      or  _no_rule($code,$line);
+
+                $item = new Parse::RecDescent::UncondReject($lookahead,$line,$code);
+                $prod and $prod.additem($item)
+                      or  _no_rule($code,$line);
+            }
+            elsif ($grammar ~~ m:c:P5/$RESYNCMK/)
+            {
+                _parse("a resync to newline marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Directive(
+                          'if ($text =~ s/(\A[^\n]*\n)//) { $return = 0; $1; } else { undef }',
+                          $lookahead,$line,"\<resync\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<resync\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$RESYNCPATMK)/
+                and do { ($code) = extract_bracketed($grammar,'<');
+                      $code })
+            {
+                _parse("a resync with pattern marker", $aftererror,$line, $code );
+                $code ~~ m:s:P5/\A\s*<resync:(.*)>\Z/;
+                $item = new Parse::RecDescent::Directive(
+                          'if ($text =~ s/(\A'~$0~')//) { $return = 0; $1; } else { undef }',
+                          $lookahead,$line,$code);
+                $prod and $prod.additem($item)
+                      or  _no_rule($code,$line);
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$SKIPMK)/
+                and do { ($code) = extract_codeblock($grammar,'<');
+                      $code })
+            {
+                _parse("a skip marker", $aftererror,$line, $code );
+                $code ~~ m:s:P5/\A\s*<skip:(.*)>\Z/;
+                if ($rule) {
+                    $item = new Parse::RecDescent::Directive(
+                        'my $oldskip = $skip; $skip='~$0~'; $oldskip',
+                        $lookahead,$line,$code);
+                    $prod and $prod.additem($item)
+                      or  _no_rule($code,$line);
+                } else {
+                    #global <skip> directive
+                    $self.{'skip'} = $0;
+                }
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$RULEVARPATMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                     $code;
+                       } )
+            {
+                _parse("a rule variable specifier", $aftererror,$line,$code);
+                $code ~~ m:s:P5/\A\s*<rulevar:(.*)>\Z/;
+
+                $rule and $rule.addvar($0,$self)
+                      or  _no_rule($code,$line);
+
+                $item = new Parse::RecDescent::UncondReject($lookahead,$line,$code);
+                $prod and $prod.additem($item)
+                      or  _no_rule($code,$line);
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$AUTOACTIONPATMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                     $code;
+                       } )
+            {
+                _parse("an autoaction specifier", $aftererror,$line,$code);
+                $code ~~ s:s:P5/\A\s*<autoaction:(.*)>\Z/$1/;
+                if ($code ~~ m:P5/\A\s*[^{]|[^}]\s*\Z/) {
+                    $code = "\{ $code \}"
+                }
+        $self.{'_check'}{'itempos'} =
+            $code ~~ m:P5/\@itempos\b|\$itempos\s*\[/;
+        $self.{'_AUTOACTION'}
+            = new Parse::RecDescent::Action($code,0,-$line)
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$DEFERPATMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                     $code;
+                       } )
+            {
+                _parse("a deferred action specifier", $aftererror,$line,$code);
+                $code ~~ s:s:P5/\A\s*<defer:(.*)>\Z/$1/;
+                if ($code ~~ m:P5/\A\s*[^{]|[^}]\s*\Z/)
+                {
+                    $code = "\{ $code \}"
+                }
+
+                $item = new Parse::RecDescent::Directive(
+                          "push \@\{\$thisparser-\>{deferred\}}, sub $code;",
+                          $lookahead,$line,"\<defer:$code\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<defer:$code\>",$line);
+
+                $self.{'deferrable'} = 1;
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$TOKENPATMK)/
+                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
+                     $code;
+                       } )
+            {
+                _parse("a token constructor", $aftererror,$line,$code);
+                $code ~~ s:s:P5/\A\s*<token:(.*)>\Z/$1/;
+
+                my $types = eval 'no strict; local $SIG{__WARN__} = sub {0}; my @arr=('~$code~'); @arr' || ();
+                if (?^$types)
+                {
+                    _error("Incorrect token specification: \"\$@\"", $line);
+                    _hint("The \<token:...\> directive requires a list
+                           of one or more strings representing possible
+                           types of the specified token. For example:
+                           \<token:NOUN,VERB\>");
+                }
+                else
+                {
+                    $item = new Parse::RecDescent::Directive(
+                              'no strict;
+                               $return = { text => $item[-1] };
+                               @{$return->{type}}{'~$code~'} = (1..'~$types~');',
+                              $lookahead,$line,"\<token:$code\>");
+                    $prod and $prod.additem($item)
+                          or  _no_rule("\<token:$code\>",$line);
+                }
+            }
+            elsif ($grammar ~~ m:c:P5/$COMMITMK/)
+            {
+                _parse("an commit marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Directive('$commit = 1',
+                                  $lookahead,$line,"\<commit\>");
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<commit\>",$line);
+            }
+            elsif ($grammar ~~ m:c:P5/$NOCHECKMK/) {
+                _parse("an hint request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+        $::RD_CHECK = 0;
+        }
+            elsif ($grammar ~~ m:c:P5/$HINTMK/) {
+                _parse("an hint request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+        $::RD_HINT = $self.{'__HINT__'} = 1;
+        }
+            elsif ($grammar ~~ m:c:P5/$WARNMK/) {
+                _parse("an warning request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+        $::RD_WARN = $self.{'__WARN__'} = $0 ?? $1+0 !! 1;
+        }
+            elsif ($grammar ~~ m:c:P5/$TRACEBUILDMK/) {
+                _parse("an grammar build trace request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+        $::RD_TRACE = $0 ?? $1+0 !! 1;
+        }
+            elsif ($grammar ~~ m:c:P5/$TRACEPARSEMK/) {
+                _parse("an parse trace request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+        $self.{'__TRACE__'} = $0 ?? $1+0 !! 1;
+        }
+            elsif ($grammar ~~ m:c:P5/$AUTOERRORMK/)
+            {
+                $commitonly = $0;
+                _parse("an error marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+                $item = new Parse::RecDescent::Error('',$lookahead,$0,$line);
+                $prod and $prod.additem($item)
+                      or  _no_rule("\<error\>",$line);
+                $aftererror = ?^$commitonly;
+            }
+            elsif ($grammar ~~ m:c:P5/(?=$MSGERRORMK)/
+                and do { $commitonly = $0;
+                     ($code) = extract_bracketed($grammar,'<');
+                    $code })
+            {
+                _parse("an error marker", $aftererror,$line,$code);
+                $code ~~ m:s:P5/\A\s*<error\??:(.*)>\Z/;
+                $item = new Parse::RecDescent::Error($0,$lookahead,$commitonly,$line);
+                $prod and $prod.additem($item)
+                      or  _no_rule("$code",$line);
+                $aftererror = ?^$commitonly;
+            }
+            elsif (do { $commitonly = $0;
+                     ($code) = extract_bracketed($grammar,'<');
+                    $code })
+            {
+                if ($code ~~ m:P5/^<[A-Z_]+>$/)
+                {
+                    _error("Token items are not yet
+                    supported: \"$code\"",
+                           $line);
+                    _hint("Items like $code that consist of angle
+                    brackets enclosing a sequence of
+                    uppercase characters will eventually
+                    be used to specify pre-lexed tokens
+                    in a grammar. That functionality is not
+                    yet implemented. Or did you misspell
+                    \"$code\"?");
+                }
+                else
+                {
+                    _error("Untranslatable item encountered: \"$code\"",
+                           $line);
+                    _hint("Did you misspell \"$code\"
+                           or forget to comment it out?");
+                }
+            }
+        }
+        elsif ($grammar ~~ m:c:P5/$RULE/)
+        {
+            _parseunneg("a rule declaration", 0,
+                    $lookahead,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
+            my $rulename = $0;
+            if ($rulename ~~ m:P5/Replace|Extend|Precompile|Save/ )
+            {
+                _warn(2,"Rule \"$rulename\" hidden by method
+                       Parse::RecDescent::$rulename",$line)
+                and
+                _hint("The rule named \"$rulename\" cannot be directly
+                       called through the Parse::RecDescent object
+                       for this grammar \(although it may still
+                       be used as a subrule of other rules\).
+                       It can't be directly called because
+                       Parse::RecDescent::$rulename is already defined \(it
+                       is the standard method of all
+                       parsers\).");
+            }
+            $rule = new Parse::RecDescent::Rule($rulename,$self,$line,$replace);
+            $prod.check_pending($line) if $prod;
+            $prod = $rule.addprod( new Parse::RecDescent::Production );
+            $aftererror = 0;
+        }
+        elsif ($grammar ~~ m:c:P5/$UNCOMMITPROD/)
+        {
+            pos($grammar)-=9;
+            _parseunneg("a new \(uncommitted\) production",
+                    0, $lookahead, $line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
+
+            $prod.check_pending($line) if $prod;
+            $prod = new Parse::RecDescent::Production($line,1);
+            $rule and $rule.addprod($prod)
+                  or  _no_rule("\<uncommit\>",$line);
+            $aftererror = 0;
+        }
+        elsif ($grammar ~~ m:c:P5/$ERRORPROD/)
+        {
+            pos($grammar)-=6;
+            _parseunneg("a new \(error\) production", $aftererror,
+                    $lookahead,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
+            $prod.check_pending($line) if $prod;
+            $prod = new Parse::RecDescent::Production($line,0,1);
+            $rule and $rule.addprod($prod)
+                  or  _no_rule("\<error\>",$line);
+            $aftererror = 0;
+        }
+        elsif ($grammar ~~ m:c:P5/$PROD/)
+        {
+            _parseunneg("a new production", 0,
+                    $lookahead,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
+            $rule
+              and (?^$prod || $prod.check_pending($line))
+              and $prod = $rule.addprod(new Parse::RecDescent::Production($line))
+            or  _no_rule("production",$line);
+            $aftererror = 0;
+        }
+        elsif ($grammar ~~ m:c:P5/$LITERAL/)
+        {
+            my $literal = $0;
+            ($code = $literal) ~~ s:c:P5/\\\\/\\/;
+            _parse("a literal terminal", $aftererror,$line,$literal);
+            $item = new Parse::RecDescent::Literal($code,$lookahead,$line);
+            $prod and $prod.additem($item)
+                  or  _no_rule("literal terminal",$line,"'$literal'");
+        }
+        elsif ($grammar ~~ m:c:P5/$INTERPLIT/)
+        {
+            _parse("an interpolated literal terminal", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+            $item = new Parse::RecDescent::InterpLit($0,$lookahead,$line);
+            $prod and $prod.additem($item)
+                  or  _no_rule("interpolated literal terminal",$line,"'$1'");
+        }
+        elsif ($grammar ~~ m:c:P5/$TOKEN/)
+        {
+            _parse("a /../ pattern terminal", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
+            $item = new Parse::RecDescent::Token($0,'/',$2??$2!!'',$lookahead,$line);
+            $prod and $prod.additem($item)
+                  or  _no_rule("pattern terminal",$line,"/$1/");
+        }
+        elsif ($grammar ~~ m:c:P5/(?=$MTOKEN)/
+            and do { ($code, Any, @components)
+                    = extract_quotelike($grammar);
+                 $code }
+              )
+
+        {
+            _parse("an m/../ pattern terminal", $aftererror,$line,$code);
+            $item = new Parse::RecDescent::Token(@components[3,2,8],
+                                 $lookahead,$line);
+            $prod and $prod.additem($item)
+                  or  _no_rule("pattern terminal",$line,$code);
+        }
+        elsif ($grammar ~~ m:c:P5/(?=$MATCHRULE)/
+                and do { ($code) = extract_bracketed($grammar,'<');
+                     $code
+                       }
+               or $grammar ~~ m:c:P5/$SUBRULE/
+                and $code = $0)
+        {
+            my $name = $code;
+            my $matchrule = 0;
+            if (substr($name,0,1) eq '<')
+            {
+                $name ~~ s:P5/$MATCHRULE\s*//;
+                $name ~~ s:P5/\s*>\Z//;
+                $matchrule = 1;
+            }
+
+        # EXTRACT TRAILING ARG LIST (IF ANY)
+
+            my ($argcode) = extract_codeblock($grammar, "[]",'') || '';
+
+        # EXTRACT TRAILING REPETITION SPECIFIER (IF ANY)
+
+            if ($grammar ~~ m:c:P5/\G[(]/)
+            {
+                pos($grammar)--;
+
+                if ($grammar ~~ m:c:P5/$OPTIONAL/)
+                {
+                    _parse("an zero-or-one subrule match", $aftererror,$line,"$code$argcode\($1\)");
+                    $item = new Parse::RecDescent::Repetition($name,$0,0,1,
+                                       $lookahead,$line,
+                                       $self,
+                                       $matchrule,
+                                       $argcode);
+                    $prod and $prod.additem($item)
+                          or  _no_rule("repetition",$line,"$code$argcode\($1\)");
+
+                    ?^$matchrule and $rule and $rule.addcall($name);
+                }
+                elsif ($grammar ~~ m:c:P5/$ANY/)
+                {
+                    _parse("a zero-or-more subrule match", $aftererror,$line,"$code$argcode\($1\)");
+                    if ($1)
+                    {
+                        my $pos = pos $grammar;
+                        substr($grammar,$pos,0,
+                               "\<leftop='$name\(s?\)': $name $2 $name\>\(s?\) ");
+
+                        pos $grammar = $pos;
+                    }
+                    else
+                    {
+                        $item = new Parse::RecDescent::Repetition($name,$0,0,$MAXREP,
+                                           $lookahead,$line,
+                                           $self,
+                                           $matchrule,
+                                           $argcode);
+                        $prod and $prod.additem($item)
+                              or  _no_rule("repetition",$line,"$code$argcode\($1\)");
+
+                        ?^$matchrule and $rule and $rule.addcall($name);
+
+                        _check_insatiable($name,$0,$grammar,$line) if $::RD_CHECK;
+                    }
+                }
+                elsif ($grammar ~~ m:c:P5/$MANY/)
+                {
+                    _parse("a one-or-more subrule match", $aftererror,$line,"$code$argcode\($1\)");
+                    if ($1)
+                    {
+                        # $DB::single=1;
+                        my $pos = pos $grammar;
+                        substr($grammar,$pos,0,
+                               "\<leftop='$name\(s\)': $name $2 $name\> ");
+
+                        pos $grammar = $pos;
+                    }
+                    else
+                    {
+                        $item = new Parse::RecDescent::Repetition($name,$0,1,$MAXREP,
+                                           $lookahead,$line,
+                                           $self,
+                                           $matchrule,
+                                           $argcode);
+
+                        $prod and $prod.additem($item)
+                              or  _no_rule("repetition",$line,"$code$argcode\($1\)");
+
+                        ?^$matchrule and $rule and $rule.addcall($name);
+
+                        _check_insatiable($name,$0,$grammar,$line) if $::RD_CHECK;
+                    }
+                }
+                elsif ($grammar ~~ m:c:P5/$EXACTLY/)
+                {
+                    _parse("an exactly-$1-times subrule match", $aftererror,$line,"$code$argcode\($1\)");
+                    if ($1)
+                    {
+                        my $pos = pos $grammar;
+                        substr($grammar,$pos,0,
+                               "\<leftop='$name\($1\)': $name $2 $name\>\($1\) ");
+
+                        pos $grammar = $pos;
+                    }
+                    else
+                    {
+                        $item = new Parse::RecDescent::Repetition($name,$0,$0,$0,
+                                           $lookahead,$line,
+                                           $self,
+                                           $matchrule,
+                                           $argcode);
+                        $prod and $prod.additem($item)
+                              or  _no_rule("repetition",$line,"$code$argcode\($1\)");
+
+                        ?^$matchrule and $rule and $rule.addcall($name);
+                    }
+                }
+                elsif ($grammar ~~ m:c:P5/$BETWEEN/)
+                {
+                    _parse("a $1-to-$2 subrule match", $aftererror,$line,"$code$argcode\($1..$2\)");
+                    if ($2)
+                    {
+                        my $pos = pos $grammar;
+                        substr($grammar,$pos,0,
+                               "\<leftop='$name\($1..$2\)': $name $3 $name\>\($1..$2\) ");
+
+                        pos $grammar = $pos;
+                    }
+                    else
+                    {
+                        $item = new Parse::RecDescent::Repetition($name,"$1..$2",$0,$1,
+                                           $lookahead,$line,
+                                           $self,
+                                           $matchrule,
+                                           $argcode);
+                        $prod and $prod.additem($item)
+                              or  _no_rule("repetition",$line,"$code$argcode\($1..$2\)");
+
+                        ?^$matchrule and $rule and $rule.addcall($name);
+                    }
+                }
+                elsif ($grammar ~~ m:c:P5/$ATLEAST/)
+                {
+                    _parse("a $1-or-more subrule match", $aftererror,$line,"$code$argcode\($1..\)");
+                    if ($1)
+                    {
+                        my $pos = pos $grammar;
+                        substr($grammar,$pos,0,
+                               "\<leftop='$name\($1..\)': $name $2 $name\>\($1..\) ");
+
+                        pos $grammar = $pos;
+                    }
+                    else
+                    {
+                        $item = new Parse::RecDescent::Repetition($name,"$1..",$0,$MAXREP,
+                                           $lookahead,$line,
+                                           $self,
+                                           $matchrule,
+                                           $argcode);
+                        $prod and $prod.additem($item)
+                              or  _no_rule("repetition",$line,"$code$argcode\($1..\)");
+
+                        ?^$matchrule and $rule and $rule.addcall($name);
+                        _check_insatiable($name,"$1..",$grammar,$line) if $::RD_CHECK;
+                    }
+                }
+                elsif ($grammar ~~ m:c:P5/$ATMOST/)
+                {
+                    _parse("a one-to-$1 subrule match", $aftererror,$line,"$code$argcode\(..$1\)");
+                    if ($1)
+                    {
+                        my $pos = pos $grammar;
+                        substr($grammar,$pos,0,
+                               "\<leftop='$name\(..$1\)': $name $2 $name\>\(..$1\) ");
+
+                        pos $grammar = $pos;
+                    }
+                    else
+                    {
+                        $item = new Parse::RecDescent::Repetition($name,"..$1",1,$0,
+                                           $lookahead,$line,
+                                           $self,
+                                           $matchrule,
+                                           $argcode);
+                        $prod and $prod.additem($item)
+                              or  _no_rule("repetition",$line,"$code$argcode\(..$1\)");
+
+                        ?^$matchrule and $rule and $rule.addcall($name);
+                    }
+                }
+                elsif ($grammar ~~ m:c:P5/$BADREP/)
+                {
+                    my $current_match = substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]);
+                    _parse("an subrule match with invalid repetition specifier", 0,$line, $current_match);
+                    _error("Incorrect specification of a repeated subrule",
+                           $line);
+                    _hint("Repeated subrules like \"$code$argcode$current_match\" cannot have
+                           a maximum repetition of zero, nor can they have
+                           negative components in their ranges.");
+                }
+            }
+            else
+            {
+                _parse("a subrule match", $aftererror,$line,$code);
+                my $desc;
+                if ($name~~m:P5/\A_alternation_\d+_of_production_\d+_of_rule/)
+                    { $desc = $self.{"rules"}{$name}.expected }
+                $item = new Parse::RecDescent::Subrule($name,
+                                       $lookahead,
+                                       $line,
+                                       $desc,
+                                       $matchrule,
+                                       $argcode);
+
+                $prod and $prod.additem($item)
+                      or  _no_rule("\(sub\)rule",$line,$name);
+
+                ?^$matchrule and $rule and $rule.addcall($name);
+            }
+        }
+        elsif ($grammar ~~ m:c:P5/$LONECOLON/   )
+        {
+            _error("Unexpected colon encountered", $line);
+            _hint("Did you mean \"|\" \(to start a new production\)?
+                   Or perhaps you forgot that the colon
+                   in a rule definition must be
+                   on the same line as the rule name?");
+        }
+        elsif ($grammar ~~ m:c:P5/$ACTION/   ) # BAD ACTION, ALREADY FAILED
+        {
+            _error("Malformed action encountered",
+                   $line);
+            _hint("Did you forget the closing curly bracket
+                   or is there a syntax error in the action?");
+        }
+        elsif ($grammar ~~ m:c:P5/$OTHER/   )
+        {
+            _error("Untranslatable item encountered: \"$1\"",
+                   $line);
+            _hint("Did you misspell \"$1\"
+                   or forget to comment it out?");
+        }
+
+        if ($lookaheadspec ~~ tr:P5 /././ > 3)
+        {
+            $lookaheadspec ~~ s:P5/\A\s+//;
+            $lookahead = $lookahead <0
+                    ?? 'a negative lookahead ("...!")'
+                    !! 'a positive lookahead ("...")' ;
+            _warn(1,"Found two or more lookahead specifiers in a
+                   row.",$line)
+            and
+            _hint("Multiple positive and/or negative lookaheads
+                   are simply multiplied together to produce a
+                   single positive or negative lookahead
+                   specification. In this case the sequence
+                   \"$lookaheadspec\" was reduced to $lookahead.
+                   Was this your intention?");
+        }
+        $lookahead = 0;
+        $lookaheadspec = "";
+
+        $grammar ~~ m:c:P5/\G\s+/;
+    }
+
+    if ($must_pop_lines) {
+        pop @lines;
+    }
+
+    unless ($ERRORS or $isimplicit or ?^$::RD_CHECK)
+    {
+        $self._check_grammar();
+    }
+
+    unless ($ERRORS or $isimplicit or $Parse::RecDescent::compiling)
+    {
+        my $code = $self._code();
+        if (defined $::RD_TRACE)
+        {
+            my $mode = ($nextnamespace eq "namespace000002") ?? '>' !! '>>';
+            $*ERR.print("printing code \(", length($code),"\) to RD_TRACE\n");
+            local *TRACE_FILE;
+            open TRACE_FILE, $mode, "RD_TRACE"
+            and TRACE_FILE.print("my \$ERRORS;\n$code")
+            and close TRACE_FILE;
+        }
+
+        unless ( eval "$code 1" )
+        {
+            _error("Internal error in generated parser code!");
+            $! ~~ s:P5/at grammar/in grammar at/;
+            _hint($!);
+        }
+    }
+
+    if ($ERRORS and ?^_verbosity("HINT"))
+    {
+        local $::RD_HINT = defined $::RD_HINT ?? $::RD_HINT !! 1;
+        _hint('Set $::RD_HINT (or -RD_HINT if you\'re using "perl -s")
+               for hints on fixing these problems.  Use $::RD_HINT = 0
+               to disable this message.');
+    }
+    if ($ERRORS) { $ERRORS=0; return }
+    return $self;
+}
+
+
+sub _addstartcode
+{
+    my ($self, $code) = @_;
+    $code ~~ s:s:P5/\A\s*\{(.*)\}\Z/$1/;
+
+    $self.{"startcode"} ~= "$code;\n";
+}
+
+# CHECK FOR GRAMMAR PROBLEMS....
+
+sub _check_insatiable
+{
+    my ($subrule,$repspec,$grammar,$line) = @_;
+    pos($grammar)=pos(@_[2]);
+    return if $grammar ~~ m:c:P5/$OPTIONAL/ || $grammar ~~ m:c:P5/$ANY/;
+    my $min = 1;
+    if ( $grammar ~~ m:c:P5/$MANY/
+      || $grammar ~~ m:c:P5/$EXACTLY/
+      || $grammar ~~ m:c:P5/$ATMOST/
+      || $grammar ~~ m:c:P5/$BETWEEN/ && do { $min=$1; 1 }
+      || $grammar ~~ m:c:P5/$ATLEAST/ && do { $min=$1; 1 }
+      || $grammar ~~ m:c:P5/$SUBRULE(?!\s*:)/
+       )
+    {
+        return unless $0 eq $subrule && $min > 0;
+        my $current_match = substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]);
+        _warn(3,"Subrule sequence \"$subrule\($repspec\) $current_match\" will
+               \(almost certainly\) fail.",$line)
+        and
+        _hint("Unless subrule \"$subrule\" performs some cunning
+               lookahead, the repetition \"$subrule\($repspec\)\" will
+               insatiably consume as many matches of \"$subrule\" as it
+               can, leaving none to match the \"$current_match\" that follows.");
+    }
+}
+
+sub _check_grammar 
+{
+    my $self = shift;
+    my $rules = $self.{"rules"};
+    my $rule;
+    for ( values %$rules ) -> $rule
+    {
+        next if ?^ $rule.{"changed"};
+
+    # CHECK FOR UNDEFINED RULES
+
+        my $call;
+        for ( @($rule.{"calls"}) ) -> $call
+        {
+            if (?^defined $($rules){$call}
+              &&?^defined &("Parse::RecDescent::$call"))
+            {
+                if (?^defined $::RD_AUTOSTUB)
+                {
+                    _warn(3,"Undefined \(sub\)rule \"$call\"
+                          used in a production.")
+                    and
+                    _hint("Will you be providing this rule
+                           later, or did you perhaps
+                           misspell \"$call\"? Otherwise
+                           it will be treated as an
+                           immediate \<reject\>.");
+                    eval "sub $self.{"namespace"}::$call {"undef"}";
+                }
+                else    # EXPERIMENTAL
+                {
+                    my $rule = qq{'$call'};
+                    if ($::RD_AUTOSTUB and $::RD_AUTOSTUB ne "1") {
+                        $rule = $::RD_AUTOSTUB;
+                    }
+                    _warn(1,"Autogenerating rule: $call")
+                    and
+                    _hint("A call was made to a subrule
+                           named \"$call\", but no such
+                           rule was specified. However,
+                           since \$::RD_AUTOSTUB
+                           was defined, a rule stub
+                           \($call : $rule\) was
+                           automatically created.");
+
+                    $self._generate("$call: $rule",0,1);
+                }
+            }
+        }
+
+    # CHECK FOR LEFT RECURSION
+
+        if ($rule.isleftrec($rules))
+        {
+            _error("Rule \"$rule.{"name"}\" is left-recursive.");
+            _hint("Redesign the grammar so it's not left-recursive.
+                   That will probably mean you need to re-implement
+                   repetitions using the '\(s\)' notation.
+                   For example: \"$rule.{"name"}\(s\)\".");
+            next;
+        }
+
+    # CHECK FOR PRODUCTIONS FOLLOWING EMPTY PRODUCTIONS
+      {
+          my $hasempty;
+          my $prod;
+          for ( @($rule.{"prods"}) ) -> $prod {
+              if ($hasempty) {
+                  _error("Production " ~ $prod.describe ~ " for \"$rule.{"name"}\"
+                         will never be reached \(preceding empty production will
+                         always match first\).");
+                  _hint("Reorder the grammar so that the empty production
+                         is last in the list or productions.");
+                  last;
+              }
+              $hasempty ||= $prod.isempty();
+          }
+      }
+    }
+}
+
+# GENERATE ACTUAL PARSER CODE
+
+sub _code
+{
+    my $self = shift;
+    my $initial_skip = defined($self.{'skip'}) ?? $self.{'skip'} !! $skip;
+
+    my $code = qq!
+package $self.{qq!namespace!};
+use strict;
+use vars qw\(\$skip \$AUTOLOAD $self.{qq!localvars!} \);
+\@$self.{qq!namespace!}\::ISA = \();
+\$skip = '$initial_skip';
+$self.{qq!startcode!}
+
+{
+local \$SIG{qq!__WARN__!} = sub {qq!0!};
+# PRETEND TO BE IN Parse::RecDescent NAMESPACE
+*$self.{qq!namespace!}::AUTOLOAD   = sub
+{
+    no strict 'refs';
+!
+# This generated code uses ${"AUTOLOAD"} rather than $AUTOLOAD in
+# order to avoid the circular reference documented here:
+#    https://rt.perl.org/rt3/Public/Bug/Display.html?id=110248
+# As a result of the investigation of
+#    https://rt.cpan.org/Ticket/Display.html?id=53710
+~ qq!
+    \$\{"AUTOLOAD"\} =~ s/^$self.{qq!namespace!}/Parse::RecDescent/;
+    goto &\{\$\{"AUTOLOAD"\}};
+\}
+\}
+
+!;
+    $code ~= "push \@$self.{"namespace"}\::ISA, 'Parse::RecDescent';";
+    $self.{"startcode"} = '';
+
+    my $rule;
+    for ( values %($self.{"rules"}) ) -> $rule
+    {
+        if ($rule.{"changed"})
+        {
+            $code ~= $rule.code($self.{"namespace"},$self);
+            $rule.{"changed"} = 0;
+        }
+    }
+
+    return $code;
+}
+
+
+# EXECUTING A PARSE....
+
+sub AUTOLOAD    # ($parser, $text; $linenum, @args)
+{
+    croak "Could not find method: $AUTOLOAD\n" unless ref @_[0];
+    my $class = ref(@_[0]) || @_[0];
+    my $text = ref(@_[1]) eq 'SCALAR' ?? $(@_[1]) !! "$_[1]";
+    @_[0].{'lastlinenum'} = _linecount($text);
+    @_[0].{'lastlinenum'} += (@_[2]||0) if @_ > 2;
+    @_[0].{'offsetlinenum'} = @_[0].{'lastlinenum'};
+    @_[0].{'fulltext'} = $text;
+    @_[0].{'fulltextlen'} = length $text;
+    @_[0].{'linecounter_cache'} = {};
+    @_[0].{'deferred'} = [];
+    @_[0].{'errors'} = [];
+    my @args = @_[3..@_.end];
+    my $args = sub { [ @args ] };
+
+    $AUTOLOAD ~~ s:P5/$class/$_[0]->{namespace}/;
+    
+
+    local $::RD_WARN  = $::RD_WARN  || @_[0].{'__WARN__'};
+    local $::RD_HINT  = $::RD_HINT  || @_[0].{'__HINT__'};
+    local $::RD_TRACE = $::RD_TRACE || @_[0].{'__TRACE__'};
+
+    croak "Unknown starting rule \($AUTOLOAD\) called\n"
+        unless defined &$AUTOLOAD;
+    my $retval = &($AUTOLOAD)(
+        @_[0], # $parser
+        $text, # $text
+        Any, # $repeating
+        Any, # $_noactions
+        $args, # \@args
+        Any, # $_itempos
+    );
+
+
+    if (defined $retval)
+    {
+        for ( @(@_[0].{'deferred'}) ) { &$_; }
+    }
+    else
+    {
+        for ( @(@_[0].{'errors'}) ) { _error(@$_); }
+    }
+
+    if (ref @_[1] eq 'SCALAR') { $(@_[1]) = $text }
+
+    $ERRORS = 0;
+    return $retval;
+}
+
+sub _parserepeat    # RETURNS A REF TO AN ARRAY OF MATCHES
+{
+    my ($parser, $text, $prod, $min, $max, $_noactions, $expectation, $argcode, $_itempos) = @_;
+    my @tokens = ();
+
+    my $itemposfirst;
+    my $reps;
+    for ($reps=0; $reps <$max;)
+    {
+        $expectation.at($text);
+        my $_savetext = $text;
+        my $prevtextlen = length $text;
+        my $_tok;
+        if (?^ defined ($_tok = &$prod($parser,$text,1,$_noactions,$argcode,$_itempos)))
+        {
+            $text = $_savetext;
+            last;
+        }
+
+        if (defined($_itempos) and ?^defined($itemposfirst))
+        {
+            $itemposfirst = Parse::RecDescent::Production::_duplicate_itempos($_itempos);
+        }
+
+        push @tokens, $_tok if defined $_tok;
+        last if ++$reps >= $min and $prevtextlen == length $text;
+    }
+
+    do { $expectation.failed(); return Any} if $reps <$min;
+
+    if (defined $itemposfirst)
+    {
+        Parse::RecDescent::Production::_update_itempos($_itempos, $itemposfirst, Any, [qw (from)]);
+    }
+
+    @_[1] = $text;
+    return [@tokens];
+}
+
+sub set_autoflush {
+    my $orig_selected = select @_[0];
+    $| = 1;
+    select $orig_selected;
+    return;
+}
+
+# ERROR REPORTING....
+
+sub _write_ERROR {
+    my ($errorprefix, $errortext) = @_;
+    return if $errortext !~~ m:P5/\S/;
+    $errorprefix ~~ s:P5/\s+\Z//;
+    local $^A = q{};
+
+    formline(q:to/END_FORMAT/, $errorprefix, $errortext);
+@>>>>>>>>>>>>>>>>>>>>: ^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+END_FORMAT
+    formline(q:to/END_FORMAT/, $errortext);
+~~                     ^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+END_FORMAT
+    {*STDERR}.print($^A);
+}
+
+# TRACING
+
+my $TRACE_FORMAT = q:to/END_FORMAT/;
+@>|@|||||||||@^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<|
+  | ~~       |^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<|
+END_FORMAT
+
+my $TRACECONTEXT_FORMAT = q:to/END_FORMAT/;
+@>|@|||||||||@                                      |^<<<<<<<<<<<<<<<<<<<<<<<<<<<
+  | ~~       |                                      |^<<<<<<<<<<<<<<<<<<<<<<<<<<<
+END_FORMAT
+
+sub _write_TRACE {
+    my ($tracelevel, $tracerulename, $tracemsg) = @_;
+    return if $tracemsg !~~ m:P5/\S/;
+    $tracemsg ~~ s:P5/\s*\Z//;
+    local $^A = q{};
+    my $bar = '|';
+    formline($TRACE_FORMAT, $tracelevel, $tracerulename, $bar, $tracemsg, $tracemsg);
+    {*STDERR}.print($^A);
+}
+
+sub _write_TRACECONTEXT {
+    my ($tracelevel, $tracerulename, $tracecontext) = @_;
+    return if $tracecontext !~~ m:P5/\S/;
+    $tracecontext ~~ s:P5/\s*\Z//;
+    local $^A = q{};
+    my $bar = '|';
+    formline($TRACECONTEXT_FORMAT, $tracelevel, $tracerulename, $bar, $tracecontext, $tracecontext);
+    {*STDERR}.print($^A);
+}
+
+sub _verbosity
+{
+       defined $::RD_TRACE
+    or defined $::RD_HINT    and  $::RD_HINT   and @_[0] ~~ m:P5/ERRORS|WARN|HINT/
+    or defined $::RD_WARN    and  $::RD_WARN   and @_[0] ~~ m:P5/ERRORS|WARN/
+    or defined $::RD_ERRORS  and  $::RD_ERRORS and @_[0] ~~ m:P5/ERRORS/
+}
+
+sub _error
+{
+    $ERRORS++;
+    return 0 if ?^ _verbosity("ERRORS");
+    my $errortext   = @_[0];
+    my $errorprefix = "ERROR" ~  (@_[1] ?? " \(line $_[1]\)" !! "");
+    $errortext ~~ s:c:P5/\s+/ /;
+    {*STDERR}.print("\n") if _verbosity("WARN");
+    _write_ERROR($errorprefix, $errortext);
+    return 1;
+}
+
+sub _warn
+{
+    return 0 unless _verbosity("WARN") && ($::RD_HINT || @_[0] >= ($::RD_WARN||1));
+    my $errortext   = @_[1];
+    my $errorprefix = "Warning" ~  (@_[2] ?? " \(line $_[2]\)" !! "");
+    {*STDERR}.print("\n") if _verbosity("HINT");
+    $errortext ~~ s:c:P5/\s+/ /;
+    _write_ERROR($errorprefix, $errortext);
+    return 1;
+}
+
+sub _hint
+{
+    return 0 unless $::RD_HINT;
+    my $errortext = @_[0];
+    my $errorprefix = "Hint" ~  (@_[1] ?? " \(line $_[1]\)" !! "");
+    $errortext ~~ s:c:P5/\s+/ /;
+    _write_ERROR($errorprefix, $errortext);
+    return 1;
+}
+
+sub _tracemax
+{
+    if (defined $::RD_TRACE
+        && $::RD_TRACE ~~ m:P5/\d+/
+        && $::RD_TRACE>1
+        && $::RD_TRACE+10 <length(@_[0]))
+    {
+        my $count = length(@_[0]) - $::RD_TRACE;
+        return substr(@_[0],0,$::RD_TRACE/2)
+            ~ "...\<$count\>..."
+            ~ substr(@_[0],-$::RD_TRACE/2);
+    }
+    else
+    {
+        return substr(@_[0],0,500);
+    }
+}
+
+sub _tracefirst
+{
+    if (defined $::RD_TRACE
+        && $::RD_TRACE ~~ m:P5/\d+/
+        && $::RD_TRACE>1
+        && $::RD_TRACE+10 <length(@_[0]))
+    {
+        my $count = length(@_[0]) - $::RD_TRACE;
+        return substr(@_[0],0,$::RD_TRACE) ~ "...\<+$count\>";
+    }
+    else
+    {
+        return substr(@_[0],0,500);
+    }
+}
+
+my $lastcontext = '';
+my $lastrulename = '';
+my $lastlevel = '';
+
+sub _trace
+{
+    my $tracemsg      = @_[0];
+    my $tracecontext  = @_[1]||$lastcontext;
+    my $tracerulename = @_[2]||$lastrulename;
+    my $tracelevel    = @_[3]||$lastlevel;
+    if ($tracerulename) { $lastrulename = $tracerulename }
+    if ($tracelevel)    { $lastlevel = $tracelevel }
+
+    $tracecontext ~~ s:c:P5/\n/\\n/;
+    $tracecontext ~~ s:c:P5/\s+/ /;
+    $tracerulename = qq{$tracerulename};
+    _write_TRACE($tracelevel, $tracerulename, $tracemsg);
+    if ($tracecontext ne $lastcontext)
+    {
+        if ($tracecontext)
+        {
+            $lastcontext = _tracefirst($tracecontext);
+            $tracecontext = qq{"$tracecontext"};
+        }
+        else
+        {
+            $tracecontext = qq{\<NO TEXT LEFT\>};
+        }
+        _write_TRACECONTEXT($tracelevel, $tracerulename, $tracecontext);
+    }
+}
+
+sub _matchtracemessage
+{
+    my ($self, $reject) = @_;
+
+    my $prefix = '';
+    my $postfix = '';
+    my $matched = not $reject;
+    my @t = ("Matched", "Didn't match");
+    if (exists $self.{'lookahead'} and $self.{'lookahead'})
+    {
+        $postfix = $reject ?? "\(reject\)" !! "\(keep\)";
+        $prefix = "...";
+        if ($self.{'lookahead'} < 0)
+        {
+            $prefix ~= '!';
+            $matched = not $matched;
+        }
+    }
+    $prefix ~ ($matched ?? @t[0] !! @t[1]) ~ $postfix;
+}
+
+sub _parseunneg
+{
+    _parse(@_[0],@_[1],@_[3],@_[4]);
+    if (@_[2] <0)
+    {
+        _error("Can't negate \"$_[4]\".",@_[3]);
+        _hint("You can't negate $_[0]. Remove the \"...!\" before
+               \"$_[4]\".");
+        return 0;
+    }
+    return 1;
+}
+
+sub _parse
+{
+    my $what = @_[3];
+       $what ~~ s:P5/^\s+//;
+    if (@_[1])
+    {
+        _warn(3,"Found $_[0] \($what\) after an unconditional \<error\>",@_[2])
+        and
+        _hint("An unconditional \<error\> always causes the
+               production containing it to immediately fail.
+               \u$_[0] that follows an \<error\>
+               will never be reached.  Did you mean to use
+               \<error?\> instead?");
+    }
+
+    return if ?^ _verbosity("TRACE");
+    my $errortext = "Treating \"$what\" as $_[0]";
+    my $errorprefix = "Parse::RecDescent";
+    $errortext ~~ s:c:P5/\s+/ /;
+    _write_ERROR($errorprefix, $errortext);
+}
+
+sub _linecount {
+    scalar substr(@_[0], pos @_[0]||0) ~~ tr:P5/\n//
+}
+
+
+use Text::Balanced:from<Perl5> qw ( extract_codeblock extract_bracketed extract_quotelike extract_delimited );
+
+
+
+   *defskip  = \ '\s*'; # DEFAULT SEPARATOR IS OPTIONAL WHITESPACE
+   $skip  = '\s*';      # UNIVERSAL SEPARATOR IS OPTIONAL WHITESPACE
+my $MAXREP  = 100_000_000;  # REPETITIONS MATCH AT MOST 100,000,000 TIMES
+
+
+#ifndef RUNTIME
+sub import  # IMPLEMENT PRECOMPILER BEHAVIOUR UNDER:
+        #    perl -MParse::RecDescent - <grammarfile> <classname>
+{
+    local *_die = sub { print @_, "\n"; exit };
+
+    my ($package, $file, $line) = caller;
+
+    if ($file eq '-' && $line == 0)
+    {
+        _die("Usage: perl -MLocalTest - \<grammarfile\> \<classname\>")
+            unless @*ARGS == 2;
+
+        my ($sourcefile, $class) = @*ARGS;
+
+        local *IN;
+        open IN, $sourcefile
+            or _die(qq{Can't open grammar file "$sourcefile"});
+        local $*IN.input-line-separator(); #
+        my $grammar = <IN>;
+        close IN;
+
+        Parse::RecDescent.Precompile($grammar, $class, $sourcefile);
+        exit;
+    }
+}
+
+sub Save
+{
+    my $self = shift;
+    my %opt;
+    if ('HASH' eq ref @_[0]) {
+        %opt = (%opt, %(@_[0]));
+        shift;
+    }
+    my ($class) = @_;
+    $self.{'saving'} = 1;
+    $self.Precompile(Any,$class);
+    $self.{'saving'} = 0;
+}
+
+sub Precompile
+{
+    my $self = shift;
+    my %opt = ( -standalone => 0 );
+    if ('HASH' eq ref @_[0]) {
+        %opt = (%opt, %(@_[0]));
+        shift;
+    }
+    my ($grammar, $class, $sourcefile) = @_;
+
+    $class ~~ m:P5/^(\w+::)*\w+$/ or croak("Bad class name: $class");
+
+    my $modulefile = $class;
+    $modulefile ~~ s:P5/.*:://;
+    $modulefile ~= ".pm";
+
+    my $runtime_package = 'Parse::RecDescent::_Runtime';
+    my $code;
+
+    local *OUT;
+    open OUT, "\>", $modulefile
+      or croak("Can't write to new module file '$modulefile'");
+
+    $*ERR.print("precompiling grammar from file '$sourcefile'\n",
+      "to class $class in module file '$modulefile'\n")
+      if $grammar && $sourcefile;
+
+    # Make the resulting pre-compiled parser stand-alone by
+    # including the contents of Parse::RecDescent as
+    # Parse::RecDescent::Runtime in the resulting precompiled
+    # parser.
+    if (%opt{'-standalone'}) {
+        local *IN;
+        open IN, '<', $Parse::RecDescent::_FILENAME
+          or croak("Can't open $Parse::RecDescent::_FILENAME for standalone pre-compilation: $!\n");
+        my $exclude = 0;
+        OUT.print("\{\n");
+        while (<IN>) {
+            if ($_ ~~ m:P5/^\s*#\s*ifndef\s+RUNTIME\s*$/) {
+                ++$exclude;
+            }
+            if ($exclude) {
+                if ($_ ~~ m:P5/^\s*#\s*endif\s$/) {
+                    --$exclude;
+                }
+            } else {
+                if ($_ ~~ m:P5/^__END__/) {
+                    last;
+                }
+                s:cs:P5/Parse::RecDescent/$runtime_package/;
+                OUT.print($_);
+            }
+        }
+        close IN;
+        OUT.print("\}\n");
+    }
+
+    $self = Parse::RecDescent.new($grammar,  # $grammar
+                                   1,         # $compiling
+                                   $class     # $namespace
+                             )
+      || croak("Can't compile bad grammar")
+      if $grammar;
+
+    # Do not allow &DESTROY to remove the precompiled namespace
+    delete $self.{'_not_precompiled'};
+
+    for ( keys %($self.{'rules'}) ) {
+        $self.{'rules'}{'$_'}{'changed'} = 1;
+    }
+
+
+    OUT.print("package $class;\n");
+    if (not %opt{'-standalone'}) {
+        OUT.print("use Parse::RecDescent;\n");
+    }
+
+    OUT.print("\{ my \$ERRORS;\n\n");
+
+    $code = $self._code();
+    if (%opt{'-standalone'}) {
+        $code ~~ s:cs:P5/Parse::RecDescent/$runtime_package/;
+    }
+    OUT.print($code);
+
+    OUT.print("\}\npackage $class; sub new \{ ");
+    OUT.print("my ");
+
+    require Data::Dumper:from<Perl5>;
+    $code = Data::Dumper.Dump([$self], [qw (self)]);
+    if (%opt{'-standalone'}) {
+        $code ~~ s:cs:P5/Parse::RecDescent/$runtime_package/;
+    }
+    OUT.print($code);
+
+    OUT.print("\}");
+
+    close OUT
+      or croak("Can't write to new module file '$modulefile'");
+}
+#endif
+
+}; class Parse::RecDescent::LineCounter {
 
 
 sub TIESCALAR   # ($classname, \$text, $thisparser, $prevflag)
@@ -12,7 +1685,7 @@ sub TIESCALAR   # ($classname, \$text, $thisparser, $prevflag)
         text    => @_[1],
         parser  => @_[2],
         prev    => @_[3]??1!!0,
-    }, @_[0];
+          }, @_[0];
 }
 
 sub FETCH
@@ -275,7 +1948,7 @@ sub ' ~ $namespace ~ '::' ~ $self.{"name"} ~  '
 {
 	my $thisparser = $_[0];
 	use vars q{$tracelevel};
-# XXX	local $tracelevel = ($tracelevel||0)+1;
+	local $tracelevel = ($tracelevel||0)+1;
 	$ERRORS = 0;
     my $thisrule = $thisparser->{"rules"}{"' ~ $self.{"name"} ~ '"};
 
@@ -307,21 +1980,21 @@ sub ' ~ $namespace ~ '::' ~ $self.{"name"} ~  '
     my $text;
     my $lastsep;
     my $current_match;
-    my $expectation = Parse::RecDescent::Expectation.new(q{' ~ $self.expected() ~ '});
+    my $expectation = new Parse::RecDescent::Expectation(q{' ~ $self.expected() ~ '});
     $expectation->at($_[1]);
-    '~ ($parser.{'_check'}{thisoffset}??'
+    '~ ($parser.{'_check'}{'thisoffset'}??'
     my $thisoffset;
     tie $thisoffset, q{Parse::RecDescent::OffsetCounter}, \$text, $thisparser;
-    '!!'') ~ ($parser.{'_check'}{prevoffset}??'
+    '!!'') ~ ($parser.{'_check'}{'prevoffset'}??'
     my $prevoffset;
     tie $prevoffset, q{Parse::RecDescent::OffsetCounter}, \$text, $thisparser, 1;
-    '!!'') ~ ($parser.{'_check'}{thiscolumn}??'
+    '!!'') ~ ($parser.{'_check'}{'thiscolumn'}??'
     my $thiscolumn;
     tie $thiscolumn, q{Parse::RecDescent::ColCounter}, \$text, $thisparser;
-    '!!'') ~ ($parser.{'_check'}{prevcolumn}??'
+    '!!'') ~ ($parser.{'_check'}{'prevcolumn'}??'
     my $prevcolumn;
     tie $prevcolumn, q{Parse::RecDescent::ColCounter}, \$text, $thisparser, 1;
-    '!!'') ~ ($parser.{'_check'}{prevline}??'
+    '!!'') ~ ($parser.{'_check'}{'prevline'}??'
     my $prevline;
     tie $prevline, q{Parse::RecDescent::LineCounter}, \$text, $thisparser, 1;
     '!!'') ~ '
@@ -480,7 +2153,7 @@ sub checkleftmost
                         as \<error?\> \<reject\>");
         Parse::RecDescent::_hint("A production consisting of a single
                       conditional \<error?\> directive would
-                      normally succeed (with the value zero) if the
+                      normally succeed \(with the value zero\) if the
                       rule is not 'commited' when it is
                       tried. Since you almost certainly wanted
                       '\<error?\> \<reject\>' Parse::RecDescent
@@ -499,15 +2172,15 @@ sub checkleftmost
     {
         Parse::RecDescent::_warn(1,"Optimizing away production: ["~ @_[0].describe ~"]");
         my $what = @items[0].describe ~~ m:P5/<rulevar/
-                ?? "a \<rulevar\> (which acts like an unconditional \<reject\> during parsing)"
+                ?? "a \<rulevar\> \(which acts like an unconditional \<reject\> during parsing\)"
              !! @items[0].describe ~~ m:P5/<autoscore/
-                ?? "an \<autoscore\> (which acts like an unconditional \<reject\> during parsing)"
+                ?? "an \<autoscore\> \(which acts like an unconditional \<reject\> during parsing\)"
                 !! "an unconditional \<reject\>";
         my $caveat = @items[0].describe ~~ m:P5/<rulevar/
                 ?? " after the specified variable was set up"
                 !! "";
         my $advice = @items > 1
-                ?? "However, there were also other (useless) items after the leading "
+                ?? "However, there were also other \(useless\) items after the leading "
                   ~ @items[0].describe
                   ~ ", so you may have been expecting some other behaviour."
                 !! "You can safely ignore this message.";
@@ -546,7 +2219,7 @@ sub addscore
     $self.additem(Parse::RecDescent::Directive.new(
                   "local \$^W;
                    my \$thisscore = do \{ $code \} + 0;
-                   if (!defined(\$score) || \$thisscore\>\$score)
+                   if \(!defined\(\$score\) || \$thisscore\>\$score\)
                     \{ \$score=\$thisscore; \$score_return=\$item[-1]; \}
                    undef;", $lookahead, $line,"\<score: $code\>") )
         unless $self.{'items'}[*-1].describe ~~ m:P5/<score/;
@@ -604,7 +2277,7 @@ sub enddirective
             Parse::RecDescent::Operator.new(
                 $op.{'type'}, $minrep, $maxrep, splice(@($self.{"items"}), -3));
         $self.{'items'}[*-1].sethashname($self);
-        $self.{'items'}[*-1]{name} = $op.{'name'};
+        $self.{'items'}[*-1]{'name'} = $op.{'name'};
         }
     }
 }
@@ -739,7 +2412,7 @@ sub code
 ';
     $code ~=
 '        my @itempos = ({});
-'           if $parser.{'_check'}{itempos};
+'           if $parser.{'_check'}{'itempos'};
 
     my $item;
     my $i;
@@ -748,11 +2421,11 @@ sub code
     {
         $item = $($self.{'items'})[$i];
 
-        $code ~= preitempos() if $parser.{'_check'}{itempos};
+        $code ~= preitempos() if $parser.{'_check'}{'itempos'};
 
         $code ~= $item.code($namespace,$rule,$parser.{'_check'});
 
-        $code ~= postitempos() if $parser.{'_check'}{itempos};
+        $code ~= postitempos() if $parser.{'_check'}{'itempos'};
 
     }
 
@@ -773,11 +2446,11 @@ sub code
     {
         if ($i==1 && $item.isterminal)
         {
-            $code ~= $parser.{'_AUTOTREE'}{TERMINAL}.code($namespace,$rule);
+            $code ~= $parser.{'_AUTOTREE'}{'TERMINAL'}.code($namespace,$rule);
         }
         else
         {
-            $code ~= $parser.{'_AUTOTREE'}{NODE}.code($namespace,$rule);
+            $code ~= $parser.{'_AUTOTREE'}{'NODE'}.code($namespace,$rule);
         }
         Parse::RecDescent::_warn(1,"Autogenerating tree-building action in rule
                        \"$rule.{"name"}\"")
@@ -798,7 +2471,7 @@ sub code
                       $tracelevel)
                         if defined $::RD_TRACE;
 
-' ~ ( $parser.{'_check'}{itempos} ?? '
+' ~ ( $parser.{'_check'}{'itempos'} ?? '
         if ( defined($_itempos) )
         {
             Parse::RecDescent::Production::_update_itempos($_itempos, $itempos[ 1], undef, [qw(from)]);
@@ -1011,9 +2684,9 @@ sub code
     }
 
     my $dir =
-          Parse::RecDescent::Directive.new('if (' ~
+          new Parse::RecDescent::Directive('if (' ~
         ($self.{"commitonly"} ?? '$commit' !! '1') ~
-        ") \{ do \{$action\} unless "~' $_noactions; undef } else {0}',
+        "\) \{ do \{$action\} unless "~' $_noactions; undef } else {0}',
                     $self.{"lookahead"},0,$self.describe);
     $dir.{'hashname'} = $self.{'hashname'};
     return $dir.code($namespace, $rule, 0);
@@ -1046,10 +2719,10 @@ sub new
 
     if ($ldel eq '/') { $desc = "$ldel$pattern$rdel$mod" }
     else          { $desc = "m$ldel$pattern$rdel$mod" }
-    $desc ~~ s:P5/\\/\\\\/;
-    $desc ~~ s:P5/\$$/\\\$/;
-    $desc ~~ s:P5/\}/\\\}/;
-    $desc ~~ s:P5/\{/\\\{/;
+    $desc ~~ s:c:P5/\\/\\\\/;
+    $desc ~~ s:c:P5/\$$/\\\$/;
+    $desc ~~ s:c:P5/}/\\}/;
+    $desc ~~ s:c:P5/{/\\{/;
 
     if (?^eval "no strict;
            local \$SIG\{__WARN__\} = sub \{0\};
@@ -1063,8 +2736,8 @@ sub new
     }
 
     # QUIETLY PREVENT (WELL-INTENTIONED) CALAMITY
-    $mod ~~ s:P5/[gc]//;
-    $pattern ~~ s:P5/(\A|[^\\])\\G/$1/;
+    $mod ~~ s:c:P5/[gc]//;
+    $pattern ~~ s:c:P5/(\A|[^\\])\\G/$1/;
 
     bless
     {
@@ -1144,9 +2817,9 @@ sub new
     my $pattern = @_[1];
 
     my $desc = $pattern;
-    $desc~~s:P5/\\/\\\\/;
-    $desc~~s:P5/\}/\\\}/;
-    $desc~~s:P5/\{/\\\{/;
+    $desc~~s:c:P5/\\/\\\\/;
+    $desc~~s:c:P5/}/\\}/;
+    $desc~~s:c:P5/{/\\{/;
 
     bless
     {
@@ -1215,12 +2888,12 @@ sub new
     my $class = ref(@_[0]) || @_[0];
 
     my $pattern = @_[1];
-    $pattern ~~ s:P5/\//\\\//;
+    $pattern ~~ s/c/P5#/#;
 
     my $desc = $pattern;
-    $desc~~s:P5/\\/\\\\/;
-    $desc~~s:P5/\}/\\\}/;
-    $desc~~s:P5/\{/\\\{/;
+    $desc~~s:c:P5/\\/\\\\/;
+    $desc~~s:c:P5/}/\\}/;
+    $desc~~s:c:P5/{/\\{/;
 
     bless
     {
@@ -1401,18 +3074,18 @@ sub new
     {
         if ($min>0)
         {
-           return Parse::RecDescent::Subrule.new($subrule,$lookahead,$line,$desc,$matchrule,$argcode);
+           return new Parse::RecDescent::Subrule($subrule,$lookahead,$line,$desc,$matchrule,$argcode);
         }
         else
         {
-            Parse::RecDescent::_error("Not symbol (\"!\") before
+            Parse::RecDescent::_error("Not symbol \(\"!\"\) before
                         \"$subrule\" doesn't make
                         sense.",$line);
             Parse::RecDescent::_hint("Lookahead for negated optional
-                       repetitions (such as
-                       \"!$subrule($repspec)\" can never
+                       repetitions \(such as
+                       \"!$subrule\($repspec\)\" can never
                        succeed, since optional items always
-                       match (zero times at worst).
+                       match \(zero times at worst\).
                        Did you mean a single \"!$subrule\",
                        instead?");
         }
@@ -1474,7 +3147,7 @@ sub code
                       q{' ~ $rule.{"name"} ~'},
                       $tracelevel)
                         if defined $::RD_TRACE;
-        $item{q{' ~ "$self.{"subrule"}($self.{"repspec"})" ~ '}} = $_tok;
+        $item{q{' ~ "$self.{"subrule"}\($self.{"repspec"}\)" ~ '}} = $_tok;
         push @item, $_tok;
         ' ~ ($self.{"lookahead"} ?? '$text = $_savetext;' !! '' ) ~'
 
@@ -1721,8 +3394,8 @@ sub message
 {
     my ($self) = @_;
     $self.{'expected'} = $self.{'defexpected'} unless $self.{'expected'};
-    $self.{'expected'} ~~ s:P5/_/ /;
-    if (?^$self.{'unexpected'} || $self.{'unexpected'} ~~ m:P5/\A\s*\Z/)
+    $self.{'expected'} ~~ s:c:P5/_/ /;
+    if (?^$self.{'unexpected'} || $self.{'unexpected'} ~~ m:s:P5/\A\s*\Z/)
     {
         return "Was expecting $self.{"expected"}";
     }
@@ -1734,1684 +3407,6 @@ sub message
 }
 
 1;
-
-}; class Parse::RecDescent { # XXX P6 doesn't allowe redeclaration of package spaces
-
-use Text::Balanced:from<Perl5> qw ( extract_codeblock extract_bracketed extract_quotelike extract_delimited );
-our $RD_AUTOACTION;
-our $RD_AUTOSTUB;
-
-use Carp:from<Perl5>;
-
-
-my $ERRORS = 0;
-
-our $VERSION = '1.967009';
-$VERSION = eval $VERSION;
-my $_FILENAME=$?FILE;
-
-# BUILDING A PARSER
-
-my $nextnamespace = "namespace000001";
-
-sub _nextnamespace
-{
-    return "Parse::RecDescent::" ~ $nextnamespace++;
-}
-
-# ARGS ARE: $class, $grammar, $compiling, $namespace
-sub new 
-{
-    my $class = ref(@_[0]) || @_[0];
-# XXX    local $Parse::RecDescent::compiling = @_[2];
-    my $name_space_name = defined @_[3]
-        ?? "Parse::RecDescent::"~@_[3]
-        !! _nextnamespace();
-    my $self =
-    {
-        "rules"     => {},
-        "namespace" => $name_space_name,
-        "startcode" => '',
-        "localvars" => '',
-        "_AUTOACTION" => Any,
-        "_AUTOTREE"   => Any,
-
-        # Precompiled parsers used to set _precompiled, but that
-        # wasn't present in some versions of Parse::RecDescent used to
-        # build precompiled parsers.  Instead, set a new
-        # _not_precompiled flag, which is remove from future
-        # Precompiled parsers at build time.
-        "_not_precompiled" => 1,
-    };
-
-
-    if ($::RD_AUTOACTION) {
-        my $sourcecode = $::RD_AUTOACTION;
-        $sourcecode = "\{ $sourcecode \}"
-            unless $sourcecode ~~ m:P5/\A\s*\{.*\}\s*\Z/;
-        $self.{'_check'}{itempos} =
-            $sourcecode ~~ m:P5/\@itempos\b|\$itempos\s*\[/;
-        $self.{'_AUTOACTION'}
-            = Parse::RecDescent::Action.new($sourcecode,0,-1)
-    }
-
-    bless $self, $class;
-    return $self.Replace(@_[1])
-}
-
-sub Compile {
-    die "Compilation of Parse::RecDescent grammars not yet implemented\n";
-}
-
-sub DESTROY {
-    my ($self) = @_;
-    my $namespace = $self.{'namespace'};
-    $namespace ~~ s:P5/Parse::RecDescent:://;
-    if ($self.{'_not_precompiled'}) {
-        # BEGIN WORKAROUND
-        # Perl has a bug that creates a circular reference between
-        # @ISA and that variable's stash:
-        #   https://rt.perl.org/rt3/Ticket/Display.html?id=92708
-        # Emptying the array before deleting the stash seems to
-        # prevent the leak.  Once the ticket above has been resolved,
-        # these two lines can be removed.
-        
-        @($self.{'namespace'} ~ '::ISA') = ();
-        # END WORKAROUND
-
-        # Some grammars may contain circular references between rules,
-        # such as:
-        #   a: 'ID' | b
-        #   b: '(' a ')'
-        # Unless these references are broken, the subs stay around on
-        # stash deletion below.  Iterate through the stash entries and
-        # for each defined code reference, set it to reference sub {}
-        # instead.
-        {
-# XXX            local $*WARNINGS; # avoid 'sub redefined' warnings.
-            my $blank_sub = sub {};
-            while (my ($name, $glob) = each %("Parse::RecDescent::$namespace\::")) {
-# XXX                *$glob = $blank_sub if defined &$glob;
-            }
-        }
-
-        # Delete the namespace's stash
-        delete %Parse::RecDescent::{'$namespace'~'::'};
-    }
-}
-
-# BUILDING A GRAMMAR....
-
-# ARGS ARE: $self, $grammar, $isimplicit, $isleftop
-sub Replace 
-{
-    # set $replace = 1 for _generate
-    splice(@_, 2, 0, 1);
-
-    return _generate(@_);
-}
-
-# ARGS ARE: $self, $grammar, $isimplicit, $isleftop
-sub Extend 
-{
-    # set $replace = 0 for _generate
-    splice(@_, 2, 0, 0);
-
-    return _generate(@_);
-}
-
-sub _no_rule 
-{
-    _error("Ruleless $_[0] at start of grammar.",@_[1]);
-    my $desc = @_[2] ?? "\"$_[2]\"" !! "";
-    _hint("You need to define a rule for the $_[0] $desc
-           to be part of.");
-}
-
-# XXX   *defskip  = \ '\s*'; # DEFAULT SEPARATOR IS OPTIONAL WHITESPACE
-our  $skip  = '\s*';      # UNIVERSAL SEPARATOR IS OPTIONAL WHITESPACE
-our $MAXREP  = 100_000_000;  # REPETITIONS MATCH AT MOST 100,000,000 TIMES
-
-my $NEGLOOKAHEAD    = '\G(\s*\.\.\.\!)';
-my $POSLOOKAHEAD    = '\G(\s*\.\.\.)';
-my $RULE        = '\G\s*(\w+)[ \t]*:';
-my $PROD        = '\G\s*([|])';
-my $TOKEN       = q{\G\s*/((\\\\/|\\\\\\\\|[^/])*)/([cgimsox]*)};
-my $MTOKEN      = q{\G\s*(m\s*[^\w\s])};
-my $LITERAL     = q{\G\s*'((\\\\['\\\\]|[^'])*)'};
-my $INTERPLIT       = q{\G\s*"((\\\\["\\\\]|[^"])*)"};
-my $SUBRULE     = '\G\s*(\w+)';
-my $MATCHRULE       = '\G(\s*<matchrule:)';
-my $SIMPLEPAT       = '((\\s+/[^/\\\\]*(?:\\\\.[^/\\\\]*)*/)?)';
-my $OPTIONAL        = '\G\((\?)'~$SIMPLEPAT~'\)';
-my $ANY         = '\G\((s\?)'~$SIMPLEPAT~'\)';
-my $MANY        = '\G\((s|\.\.)'~$SIMPLEPAT~'\)';
-my $EXACTLY     = '\G\(([1-9]\d*)'~$SIMPLEPAT~'\)';
-my $BETWEEN     = '\G\((\d+)\.\.([1-9]\d*)'~$SIMPLEPAT~'\)';
-my $ATLEAST     = '\G\((\d+)\.\.'~$SIMPLEPAT~'\)';
-my $ATMOST      = '\G\(\.\.([1-9]\d*)'~$SIMPLEPAT~'\)';
-my $BADREP      = '\G\((-?\d+)?\.\.(-?\d+)?'~$SIMPLEPAT~'\)';
-my $ACTION      = '\G\s*\{';
-my $IMPLICITSUBRULE = '\G\s*\(';
-my $COMMENT     = '\G\s*(#.*)';
-my $COMMITMK        = '\G\s*<commit>';
-my $UNCOMMITMK      = '\G\s*<uncommit>';
-my $QUOTELIKEMK     = '\G\s*<perl_quotelike>';
-my $CODEBLOCKMK     = '\G\s*<perl_codeblock(?:\s+([][()<>{}]+))?>';
-my $VARIABLEMK      = '\G\s*<perl_variable>';
-my $NOCHECKMK       = '\G\s*<nocheck>';
-my $AUTOACTIONPATMK = '\G\s*<autoaction:';
-my $AUTOTREEMK      = '\G\s*<autotree(?::\s*([\w:]+)\s*)?>';
-my $AUTOSTUBMK      = '\G\s*<autostub>';
-my $AUTORULEMK      = '\G\s*<autorule:(.*?)>';
-my $REJECTMK        = '\G\s*<reject>';
-my $CONDREJECTMK    = '\G\s*<reject:';
-my $SCOREMK     = '\G\s*<score:';
-my $AUTOSCOREMK     = '\G\s*<autoscore:';
-my $SKIPMK      = '\G\s*<skip:';
-my $OPMK        = '\G\s*<(left|right)op(?:=(\'.*?\'))?:';
-my $ENDDIRECTIVEMK  = '\G\s*>';
-my $RESYNCMK        = '\G\s*<resync>';
-my $RESYNCPATMK     = '\G\s*<resync:';
-my $RULEVARPATMK    = '\G\s*<rulevar:';
-my $DEFERPATMK      = '\G\s*<defer:';
-my $TOKENPATMK      = '\G\s*<token:';
-my $AUTOERRORMK     = '\G\s*<error(\??)>';
-my $MSGERRORMK      = '\G\s*<error(\??):';
-my $NOCHECK     = '\G\s*<nocheck>';
-my $WARNMK      = '\G\s*<warn((?::\s*(\d+)\s*)?)>';
-my $HINTMK      = '\G\s*<hint>';
-my $TRACEBUILDMK    = '\G\s*<trace_build((?::\s*(\d+)\s*)?)>';
-my $TRACEPARSEMK    = '\G\s*<trace_parse((?::\s*(\d+)\s*)?)>';
-my $UNCOMMITPROD    = $PROD~'\s*<uncommit';
-my $ERRORPROD       = $PROD~'\s*<error';
-my $LONECOLON       = '\G\s*:';
-my $OTHER       = '\G\s*([^\s]+)';
-
-my @lines = 0;
-
-sub _generate
-{
-    my ($self, $grammar, $replace, $isimplicit, $isleftop) = (@_, 0);
-
-    my $aftererror = 0;
-    my $lookahead = 0;
-    my $lookaheadspec = "";
-    my $must_pop_lines;
-    if (?^ @lines[*-1]) {
-        push @lines, _linecount($grammar) ;
-        $must_pop_lines = 1;
-    }
-    $self.{'_check'}{itempos} = ($grammar ~~ m:P5/\@itempos\b|\$itempos\s*\[/)
-        unless $self.{'_check'}{itempos};
-    for (qw (thisoffset thiscolumn prevline prevoffset prevcolumn))
-    {
-        $self.{'_check'}{$_} =
-            ($grammar ~~ m:P5/\$$_/) || $self.{'_check'}{itempos}
-                unless $self.{'_check'}{$_};
-    }
-    my $line;
-
-    my $rule = Any;
-    my $prod = Any;
-    my $item = Any;
-    my $lastgreedy = '';
-    pos $grammar = 0;
-    study $grammar;
-
-# XXX    local $::RD_HINT  = $::RD_HINT;
-# XXX    local $::RD_WARN  = $::RD_WARN;
-# XXX    local $::RD_TRACE = $::RD_TRACE;
-# XXX    local $::RD_CHECK = $::RD_CHECK;
-
-our $RD_HINT;
-our $RD_WARN;
-our $RD_TRACE;
-our $RD_CHECK;
-
-    while (pos $grammar < length $grammar)
-    {
-        $line = @lines[*-1] - _linecount($grammar) + 1;
-        my $commitonly;
-        my $code = "";
-        my @components = ();
-        my $NO_LOOK_AHEAD = '\G\s*<[^m]/'; # XXX
-        if ($grammar ~~ m:c:P5/$COMMENT/)
-        {
-            _parse("a comment",0,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-            next;
-        }
-        elsif ($grammar ~~ m:c:P5/$NEGLOOKAHEAD/)
-        {
-            _parse("a negative lookahead",$aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-            $lookahead = $lookahead ?? -$lookahead !! -1;
-            $lookaheadspec ~= $0;
-            next;   # SKIP LOOKAHEAD RESET AT END OF while LOOP
-        }
-        elsif ($grammar ~~ m:c:P5/$POSLOOKAHEAD/)
-        {
-            _parse("a positive lookahead",$aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-            $lookahead = $lookahead ?? $lookahead !! 1;
-            $lookaheadspec ~= $0;
-            next;   # SKIP LOOKAHEAD RESET AT END OF while LOOP
-        }
-        elsif ($grammar ~~ m:c:P5/(?=$ACTION)/
-            and do { ($code) = extract_codeblock($grammar); $code })
-        {
-            _parse("an action", $aftererror, $line, $code);
-            $item = Parse::RecDescent::Action.new($code,$lookahead,$line);
-            $prod and $prod.additem($item)
-                  or  $self._addstartcode($code);
-        }
-        elsif ($grammar ~~ m:c:P5/(?=$IMPLICITSUBRULE)/
-            and do { ($code) = extract_codeblock($grammar,'{([',Any,'(',1);
-                $code })
-        {
-            $code ~~ s:P5/\A\s*\(|\)\Z//;
-            _parse("an implicit subrule", $aftererror, $line,
-                "( $code )");
-            my $implicit = $rule.nextimplicit;
-            return Any
-                if ?^$self._generate("$implicit : $code",$replace,1);
-            my $pos = pos $grammar;
-            substr($grammar,$pos,0,$implicit);
-            pos $grammar = $pos;;
-        }
-        elsif ($grammar ~~ m:c:P5/$ENDDIRECTIVEMK/)
-        {
-
-        # EXTRACT TRAILING REPETITION SPECIFIER (IF ANY)
-
-            my ($minrep,$maxrep) = (1,$MAXREP);
-            my $NEXTOPENPAREN='\G[(]'; # XXX
-            if ($grammar ~~ m:P5:c/$NEXTOPENPAREN/)
-            {
-                pos($grammar)--;
-
-                if ($grammar ~~ m:c:P5/$OPTIONAL/)
-                    { ($minrep, $maxrep) = (0,1) }
-                elsif ($grammar ~~ m:c:P5/$ANY/)
-                    { $minrep = 0 }
-                elsif ($grammar ~~ m:c:P5/$EXACTLY/)
-                    { ($minrep, $maxrep) = ($0,$0) }
-                elsif ($grammar ~~ m:c:P5/$BETWEEN/)
-                    { ($minrep, $maxrep) = ($0,$1) }
-                elsif ($grammar ~~ m:c:P5/$ATLEAST/)
-                    { $minrep = $0 }
-                elsif ($grammar ~~ m:c:P5/$ATMOST/)
-                    { $maxrep = $0 }
-                elsif ($grammar ~~ m:c:P5/$MANY/)
-                    { }
-                elsif ($grammar ~~ m:c:P5/$BADREP/)
-                {
-                    _parse("an invalid repetition specifier", 0,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                    _error("Incorrect specification of a repeated directive",
-                           $line);
-                    _hint("Repeated directives cannot have
-                           a maximum repetition of zero, nor can they have
-                           negative components in their ranges.");
-                }
-            }
-
-            $prod && $prod.enddirective($line,$minrep,$maxrep);
-        }
-        elsif ($grammar ~~ m:c:P5/$NO_LOOK_AHEAD/)
-        {
-            pos($grammar)-=2;
-
-            if ($grammar ~~ m:c:P5/$OPMK/)
-            {
-                # $DB::single=1;
-                _parse("a $1-associative operator directive", $aftererror, $line, "\<$1op:...\>");
-                $prod.adddirective($0, $line,$1||'');
-            }
-            elsif ($grammar ~~ m:c:P5/$UNCOMMITMK/)
-            {
-                _parse("an uncommit marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Directive.new('$commit=0;1',
-                                  $lookahead,$line,"\<uncommit\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<uncommit\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/$QUOTELIKEMK/)
-            {
-                _parse("an perl quotelike marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Directive.new(
-                    'my ($match,@res);
-                     ($match,$text,undef,@res) =
-                          Text::Balanced::extract_quotelike($text,$skip);
-                      $match ? \@res : undef;
-                    ', $lookahead,$line,"\<perl_quotelike\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<perl_quotelike\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/$CODEBLOCKMK/)
-            {
-                my $outer = $0||"\{\}";
-                _parse("an perl codeblock marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Directive.new(
-                    'Text::Balanced::extract_codeblock($text,undef,$skip,\''~$outer~'\');
-                    ', $lookahead,$line,"\<perl_codeblock\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<perl_codeblock\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/$VARIABLEMK/)
-            {
-                _parse("an perl variable marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Directive.new(
-                    'Text::Balanced::extract_variable($text,$skip);
-                    ', $lookahead,$line,"\<perl_variable\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<perl_variable\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/$NOCHECKMK/)
-            {
-                _parse("a disable checking marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                if ($rule)
-                {
-                    _error("\<nocheck\> directive not at start of grammar", $line);
-                    _hint("The \<nocheck\> directive can only
-                           be specified at the start of a
-                           grammar (before the first rule
-                           is defined.");
-                }
-                else
-                {
-# XXX                    local $::RD_CHECK = 1;
-                }
-            }
-            elsif ($grammar ~~ m:c:P5/$AUTOSTUBMK/)
-            {
-                _parse("an autostub marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $::RD_AUTOSTUB = "";
-            }
-            elsif ($grammar ~~ m:c:P5/$AUTORULEMK/)
-            {
-                _parse("an autorule marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $::RD_AUTOSTUB = $0;
-            }
-            elsif ($grammar ~~ m:c:P5/$AUTOTREEMK/)
-            {
-                my $base = defined($0) ?? $0 !! "";
-                my $current_match = substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]);
-                $base ~= "::" if $base && $base !~~ m:P5/::$/;
-                _parse("an autotree marker", $aftererror,$line, $current_match);
-                if ($rule)
-                {
-                    _error("\<autotree\> directive not at start of grammar", $line);
-                    _hint("The \<autotree\> directive can only
-                           be specified at the start of a
-                           grammar (before the first rule
-                           is defined.");
-                }
-                else
-                {
-                    $self.{'_AUTOACTION'} = Any;
-                    $self.{'_AUTOTREE'}{NODE}
-                        = Parse::RecDescent::Action.new(q ({bless \%item, ')~$base~q ('.$item[0]}),0,-1);
-                    $self.{'_AUTOTREE'}{TERMINAL}
-                        = Parse::RecDescent::Action.new(q ({bless {__VALUE__=>$item[1]}, ')~$base~q ('.$item[0]}),0,-1);
-                }
-            }
-
-            elsif ($grammar ~~ m:c:P5/$REJECTMK/)
-            {
-                _parse("an reject marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::UncondReject.new($lookahead,$line,"\<reject\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<reject\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$CONDREJECTMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                      $code })
-            {
-                _parse("a (conditional) reject marker", $aftererror,$line, $code );
-                $code ~~ m:P5/\A\s*<reject:(.*)>\Z/;
-                my $cond = $0;
-                $item = Parse::RecDescent::Directive.new(
-                          "($1) ? undef : 1", $lookahead,$line,"\<reject:$cond\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<reject:$cond\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$SCOREMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                      $code })
-            {
-                _parse("a score marker", $aftererror,$line, $code );
-                $code ~~ m:P5/\A\s*<score:(.*)>\Z/;
-                $prod and $prod.addscore($0, $lookahead, $line)
-                      or  _no_rule($code,$line);
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$AUTOSCOREMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                     $code;
-                       } )
-            {
-                _parse("an autoscore specifier", $aftererror,$line,$code);
-                $code ~~ m:P5/\A\s*<autoscore:(.*)>\Z/;
-
-                $rule and $rule.addautoscore($0,$self)
-                      or  _no_rule($code,$line);
-
-                $item = Parse::RecDescent::UncondReject.new($lookahead,$line,$code);
-                $prod and $prod.additem($item)
-                      or  _no_rule($code,$line);
-            }
-            elsif ($grammar ~~ m:c:P5/$RESYNCMK/)
-            {
-                _parse("a resync to newline marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Directive.new(
-                          'if ($text =~ s/(\A[^\n]*\n)//) { $return = 0; $1; } else { undef }',
-                          $lookahead,$line,"\<resync\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<resync\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$RESYNCPATMK)/
-                and do { ($code) = extract_bracketed($grammar,'<');
-                      $code })
-            {
-                _parse("a resync with pattern marker", $aftererror,$line, $code );
-                $code ~~ m:P5/\A\s*<resync:(.*)>\Z/;
-                $item = Parse::RecDescent::Directive.new(
-                          'if ($text =~ s/(\A'~$0~')//) { $return = 0; $1; } else { undef }',
-                          $lookahead,$line,$code);
-                $prod and $prod.additem($item)
-                      or  _no_rule($code,$line);
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$SKIPMK)/
-                and do { ($code) = extract_codeblock($grammar,'<');
-                      $code })
-            {
-                _parse("a skip marker", $aftererror,$line, $code );
-                $code ~~ m:P5/\A\s*<skip:(.*)>\Z/;
-                if ($rule) {
-                    $item = Parse::RecDescent::Directive.new(
-                        'my $oldskip = $skip; $skip='~$0~'; $oldskip',
-                        $lookahead,$line,$code);
-                    $prod and $prod.additem($item)
-                      or  _no_rule($code,$line);
-                } else {
-                    #global <skip> directive
-                    $self.{'skip'} = $0;
-                }
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$RULEVARPATMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                     $code;
-                       } )
-            {
-                _parse("a rule variable specifier", $aftererror,$line,$code);
-                $code ~~ m:P5/\A\s*<rulevar:(.*)>\Z/;
-
-                $rule and $rule.addvar($0,$self)
-                      or  _no_rule($code,$line);
-
-                $item = Parse::RecDescent::UncondReject.new($lookahead,$line,$code);
-                $prod and $prod.additem($item)
-                      or  _no_rule($code,$line);
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$AUTOACTIONPATMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                     $code;
-                       } )
-            {
-                _parse("an autoaction specifier", $aftererror,$line,$code);
-                $code ~~ s:P5/\A\s*<autoaction:(.*)>\Z/$1/;
-                if ($code ~~ m:P5/\A\s*[^{]|[^}]\s*\Z/) {
-                    $code = "\{ $code \}"
-                }
-        $self.{'_check'}{itempos} =
-            $code ~~ m:P5/\@itempos\b|\$itempos\s*\[/;
-        $self.{'_AUTOACTION'}
-            = Parse::RecDescent::Action.new($code,0,-$line)
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$DEFERPATMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                     $code;
-                       } )
-            {
-                _parse("a deferred action specifier", $aftererror,$line,$code);
-                $code ~~ s:P5/\A\s*<defer:(.*)>\Z/$1/;
-                if ($code ~~ m:P5/\A\s*[^{]|[^}]\s*\Z/)
-                {
-                    $code = "\{ $code \}"
-                }
-
-                $item = Parse::RecDescent::Directive.new(
-                          "push \@\{\$thisparser-\>\{deferred\}\}, sub $code;",
-                          $lookahead,$line,"\<defer:$code\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<defer:$code\>",$line);
-
-                $self.{'deferrable'} = 1;
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$TOKENPATMK)/
-                and do { ($code) = extract_codeblock($grammar,'{',Any,'<');
-                     $code;
-                       } )
-            {
-                _parse("a token constructor", $aftererror,$line,$code);
-                $code ~~ s:P5/\A\s*<token:(.*)>\Z/$1/;
-
-                my $types = eval 'no strict; local $SIG{__WARN__} = sub {0}; my @arr=('~$code~'); @arr' || ();
-                if (?^$types)
-                {
-                    _error("Incorrect token specification: \"\$@\"", $line);
-                    _hint("The \<token:...\> directive requires a list
-                           of one or more strings representing possible
-                           types of the specified token. For example:
-                           \<token:NOUN,VERB\>");
-                }
-                else
-                {
-                    $item = Parse::RecDescent::Directive.new(
-                              'no strict;
-                               $return = { text => $item[-1] };
-                               @{$return->{type}}{'~$code~'} = (1..'~$types~');',
-                              $lookahead,$line,"\<token:$code\>");
-                    $prod and $prod.additem($item)
-                          or  _no_rule("\<token:$code\>",$line);
-                }
-            }
-            elsif ($grammar ~~ m:c:P5/$COMMITMK/)
-            {
-                _parse("an commit marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Directive.new('$commit = 1',
-                                  $lookahead,$line,"\<commit\>");
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<commit\>",$line);
-            }
-            elsif ($grammar ~~ m:c:P5/$NOCHECKMK/) {
-                _parse("an hint request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-        $::RD_CHECK = 0;
-        }
-            elsif ($grammar ~~ m:c:P5/$HINTMK/) {
-                _parse("an hint request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-        $::RD_HINT = $self.{'__HINT__'} = 1;
-        }
-            elsif ($grammar ~~ m:c:P5/$WARNMK/) {
-                _parse("an warning request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-        $::RD_WARN = $self.{'__WARN__'} = $0 ?? $1+0 !! 1;
-        }
-            elsif ($grammar ~~ m:c:P5/$TRACEBUILDMK/) {
-                _parse("an grammar build trace request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-        $::RD_TRACE = $0 ?? $1+0 !! 1;
-        }
-            elsif ($grammar ~~ m:c:P5/$TRACEPARSEMK/) {
-                _parse("an parse trace request", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-        $self.{'__TRACE__'} = $0 ?? $1+0 !! 1;
-        }
-            elsif ($grammar ~~ m:c:P5/$AUTOERRORMK/)
-            {
-                $commitonly = $0;
-                _parse("an error marker", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-                $item = Parse::RecDescent::Error.new('',$lookahead,$0,$line);
-                $prod and $prod.additem($item)
-                      or  _no_rule("\<error\>",$line);
-                $aftererror = ?^$commitonly;
-            }
-            elsif ($grammar ~~ m:c:P5/(?=$MSGERRORMK)/
-                and do { $commitonly = $0;
-                     ($code) = extract_bracketed($grammar,'<');
-                    $code })
-            {
-                _parse("an error marker", $aftererror,$line,$code);
-                $code ~~ m:P5/\A\s*<error\??:(.*)>\Z/;
-                $item = Parse::RecDescent::Error.new($0,$lookahead,$commitonly,$line);
-                $prod and $prod.additem($item)
-                      or  _no_rule("$code",$line);
-                $aftererror = ?^$commitonly;
-            }
-            elsif (do { $commitonly = $0;
-                     ($code) = extract_bracketed($grammar,'<');
-                    $code })
-            {
-                if ($code ~~ m:P5/^<[A-Z_]+>$/)
-                {
-                    _error("Token items are not yet
-                    supported: \"$code\"",
-                           $line);
-                    _hint("Items like $code that consist of angle
-                    brackets enclosing a sequence of
-                    uppercase characters will eventually
-                    be used to specify pre-lexed tokens
-                    in a grammar. That functionality is not
-                    yet implemented. Or did you misspell
-                    \"$code\"?");
-                }
-                else
-                {
-                    _error("Untranslatable item encountered: \"$code\"",
-                           $line);
-                    _hint("Did you misspell \"$code\"
-                           or forget to comment it out?");
-                }
-            }
-        }
-        elsif ($grammar ~~ m:c:P5/$RULE/)
-        {
-            _parseunneg("a rule declaration", 0,
-                    $lookahead,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
-            my $rulename = $0;
-            if ($rulename ~~ m:P5/Replace|Extend|Precompile|Save/ )
-            {
-                _warn(2,"Rule \"$rulename\" hidden by method
-                       Parse::RecDescent::$rulename",$line)
-                and
-                _hint("The rule named \"$rulename\" cannot be directly
-                       called through the Parse::RecDescent object
-                       for this grammar (although it may still
-                       be used as a subrule of other rules).
-                       It can't be directly called because
-                       Parse::RecDescent::$rulename is already defined (it
-                       is the standard method of all
-                       parsers).");
-            }
-            $rule = Parse::RecDescent::Rule.new($rulename,$self,$line,$replace);
-            $prod.check_pending($line) if $prod;
-            $prod = $rule.addprod( Parse::RecDescent::Production.new() );
-            $aftererror = 0;
-        }
-        elsif ($grammar ~~ m:c:P5/$UNCOMMITPROD/)
-        {
-            pos($grammar)-=9;
-            _parseunneg("a new (uncommitted) production",
-                    0, $lookahead, $line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
-
-            $prod.check_pending($line) if $prod;
-            $prod = Parse::RecDescent::Production.new($line,1);
-            $rule and $rule.addprod($prod)
-                  or  _no_rule("\<uncommit\>",$line);
-            $aftererror = 0;
-        }
-        elsif ($grammar ~~ m:c:P5/$ERRORPROD/)
-        {
-            pos($grammar)-=6;
-            _parseunneg("a new (error) production", $aftererror,
-                    $lookahead,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
-            $prod.check_pending($line) if $prod;
-            $prod = Parse::RecDescent::Production.new($line,0,1);
-            $rule and $rule.addprod($prod)
-                  or  _no_rule("\<error\>",$line);
-            $aftererror = 0;
-        }
-        elsif ($grammar ~~ m:c:P5/$PROD/)
-        {
-            _parseunneg("a new production", 0,
-                    $lookahead,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) ) or next;
-            $rule
-              and (?^$prod || $prod.check_pending($line))
-              and $prod = $rule.addprod(Parse::RecDescent::Production.new($line))
-            or  _no_rule("production",$line);
-            $aftererror = 0;
-        }
-        elsif ($grammar ~~ m:c:P5/$LITERAL/)
-        {
-            my $literal = $0;
-            ($code = $literal) ~~ s:P5/\\\\/\\/;
-            _parse("a literal terminal", $aftererror,$line,$literal);
-            $item = Parse::RecDescent::Literal.new($code,$lookahead,$line);
-            $prod and $prod.additem($item)
-                  or  _no_rule("literal terminal",$line,"'$literal'");
-        }
-        elsif ($grammar ~~ m:c:P5/$INTERPLIT/)
-        {
-            _parse("an interpolated literal terminal", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-            $item = Parse::RecDescent::InterpLit.new($0,$lookahead,$line);
-            $prod and $prod.additem($item)
-                  or  _no_rule("interpolated literal terminal",$line,"'$1'");
-        }
-        elsif ($grammar ~~ m:c:P5/$TOKEN/)
-        {
-            _parse("a /../ pattern terminal", $aftererror,$line, substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]) );
-            $item = Parse::RecDescent::Token.new($0,'/',$2??$2!!'',$lookahead,$line);
-            $prod and $prod.additem($item)
-                  or  _no_rule("pattern terminal",$line,"/$1/");
-        }
-        elsif ($grammar ~~ m:c:P5/(?=$MTOKEN)/
-            and do { ($code, Any, @components)
-                    = extract_quotelike($grammar);
-                 $code }
-              )
-
-        {
-            _parse("an m/../ pattern terminal", $aftererror,$line,$code);
-            $item = Parse::RecDescent::Token.new(@components[3,2,8],
-                                 $lookahead,$line);
-            $prod and $prod.additem($item)
-                  or  _no_rule("pattern terminal",$line,$code);
-        }
-        elsif ($grammar ~~ m:c:P5/(?=$MATCHRULE)/
-                and do { ($code) = extract_bracketed($grammar,'<');
-                     $code
-                       }
-               or $grammar ~~ m:c:P5/$SUBRULE/
-                and $code = $0)
-        {
-            my $name = $code;
-            my $matchrule = 0;
-            if (substr($name,0,1) eq '<')
-            {
-                $name ~~ s:P5/$MATCHRULE\s*//;
-                $name ~~ s:P5/\s*>\Z//;
-                $matchrule = 1;
-            }
-
-        # EXTRACT TRAILING ARG LIST (IF ANY)
-
-            my ($argcode) = extract_codeblock($grammar, "[]",'') || '';
-
-        # EXTRACT TRAILING REPETITION SPECIFIER (IF ANY)
-
-            if ($grammar ~~ m:c:P5/$NEXTOPENPAREN/) # XXX
-            {
-                pos($grammar)--;
-
-                if ($grammar ~~ m:c:P5/$OPTIONAL/)
-                {
-                    _parse("an zero-or-one subrule match", $aftererror,$line,"$code$argcode($1)");
-                    $item = Parse::RecDescent::Repetition.new($name,$0,0,1,
-                                       $lookahead,$line,
-                                       $self,
-                                       $matchrule,
-                                       $argcode);
-                    $prod and $prod.additem($item)
-                          or  _no_rule("repetition",$line,"$code$argcode($1)");
-
-                    ?^$matchrule and $rule and $rule.addcall($name);
-                }
-                elsif ($grammar ~~ m:c:P5/$ANY/)
-                {
-                    _parse("a zero-or-more subrule match", $aftererror,$line,"$code$argcode($1)");
-                    if ($1)
-                    {
-                        my $pos = pos $grammar;
-                        substr($grammar,$pos,0,
-                               "\<leftop='$name\(s?\)': $name $2 $name\>(s?) ");
-
-                        pos $grammar = $pos;
-                    }
-                    else
-                    {
-                        $item = Parse::RecDescent::Repetition.new($name,$0,0,$MAXREP,
-                                           $lookahead,$line,
-                                           $self,
-                                           $matchrule,
-                                           $argcode);
-                        $prod and $prod.additem($item)
-                              or  _no_rule("repetition",$line,"$code$argcode($1)");
-
-                        ?^$matchrule and $rule and $rule.addcall($name);
-
-                        _check_insatiable($name,$0,$grammar,$line) if $::RD_CHECK;
-                    }
-                }
-                elsif ($grammar ~~ m:c:P5/$MANY/)
-                {
-                    _parse("a one-or-more subrule match", $aftererror,$line,"$code$argcode($1)");
-                    if ($1)
-                    {
-                        # $DB::single=1;
-                        my $pos = pos $grammar;
-                        substr($grammar,$pos,0,
-                               "\<leftop='$name\(s\)': $name $2 $name\> ");
-
-                        pos $grammar = $pos;
-                    }
-                    else
-                    {
-                        $item = Parse::RecDescent::Repetition.new($name,$0,1,$MAXREP,
-                                           $lookahead,$line,
-                                           $self,
-                                           $matchrule,
-                                           $argcode);
-
-                        $prod and $prod.additem($item)
-                              or  _no_rule("repetition",$line,"$code$argcode($1)");
-
-                        ?^$matchrule and $rule and $rule.addcall($name);
-
-                        _check_insatiable($name,$0,$grammar,$line) if $::RD_CHECK;
-                    }
-                }
-                elsif ($grammar ~~ m:c:P5/$EXACTLY/)
-                {
-                    _parse("an exactly-$1-times subrule match", $aftererror,$line,"$code$argcode($1)");
-                    if ($1)
-                    {
-                        my $pos = pos $grammar;
-                        substr($grammar,$pos,0,
-                               "\<leftop='$name($1)': $name $2 $name\>($1) ");
-
-                        pos $grammar = $pos;
-                    }
-                    else
-                    {
-                        $item = Parse::RecDescent::Repetition.new($name,$0,$0,$0,
-                                           $lookahead,$line,
-                                           $self,
-                                           $matchrule,
-                                           $argcode);
-                        $prod and $prod.additem($item)
-                              or  _no_rule("repetition",$line,"$code$argcode($1)");
-
-                        ?^$matchrule and $rule and $rule.addcall($name);
-                    }
-                }
-                elsif ($grammar ~~ m:c:P5/$BETWEEN/)
-                {
-                    _parse("a $1-to-$2 subrule match", $aftererror,$line,"$code$argcode($1..$2)");
-                    if ($2)
-                    {
-                        my $pos = pos $grammar;
-                        substr($grammar,$pos,0,
-                               "\<leftop='$name($1..$2)': $name $3 $name\>($1..$2) ");
-
-                        pos $grammar = $pos;
-                    }
-                    else
-                    {
-                        $item = Parse::RecDescent::Repetition.new($name,"$1..$2",$0,$1,
-                                           $lookahead,$line,
-                                           $self,
-                                           $matchrule,
-                                           $argcode);
-                        $prod and $prod.additem($item)
-                              or  _no_rule("repetition",$line,"$code$argcode($1..$2)");
-
-                        ?^$matchrule and $rule and $rule.addcall($name);
-                    }
-                }
-                elsif ($grammar ~~ m:c:P5/$ATLEAST/)
-                {
-                    _parse("a $1-or-more subrule match", $aftererror,$line,"$code$argcode\($1..\)");
-                    if ($1)
-                    {
-                        my $pos = pos $grammar;
-                        substr($grammar,$pos,0,
-                               "\<leftop='$name\($1..\)': $name $2 $name\>($1..) ");
-
-                        pos $grammar = $pos;
-                    }
-                    else
-                    {
-                        $item = Parse::RecDescent::Repetition.new($name,"$1..",$0,$MAXREP,
-                                           $lookahead,$line,
-                                           $self,
-                                           $matchrule,
-                                           $argcode);
-                        $prod and $prod.additem($item)
-                              or  _no_rule("repetition",$line,"$code$argcode\($1..\)");
-
-                        ?^$matchrule and $rule and $rule.addcall($name);
-                        _check_insatiable($name,"$1..",$grammar,$line) if $::RD_CHECK;
-                    }
-                }
-                elsif ($grammar ~~ m:c:P5/$ATMOST/)
-                {
-                    _parse("a one-to-$1 subrule match", $aftererror,$line,"$code$argcode\(..$1\)");
-                    if ($1)
-                    {
-                        my $pos = pos $grammar;
-                        substr($grammar,$pos,0,
-                               "\<leftop='$name\(..$1\)': $name $2 $name\>(..$1) ");
-
-                        pos $grammar = $pos;
-                    }
-                    else
-                    {
-                        $item = Parse::RecDescent::Repetition.new($name,"..$1",1,$0,
-                                           $lookahead,$line,
-                                           $self,
-                                           $matchrule,
-                                           $argcode);
-                        $prod and $prod.additem($item)
-                              or  _no_rule("repetition",$line,"$code$argcode\(..$1\)");
-
-                        ?^$matchrule and $rule and $rule.addcall($name);
-                    }
-                }
-                elsif ($grammar ~~ m:c:P5/$BADREP/)
-                {
-                    my $current_match = substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]);
-                    _parse("an subrule match with invalid repetition specifier", 0,$line, $current_match);
-                    _error("Incorrect specification of a repeated subrule",
-                           $line);
-                    _hint("Repeated subrules like \"$code$argcode$current_match\" cannot have
-                           a maximum repetition of zero, nor can they have
-                           negative components in their ranges.");
-                }
-            }
-            else
-            {
-                _parse("a subrule match", $aftererror,$line,$code);
-                my $desc;
-                if ($name~~m:P5/\A_alternation_\d+_of_production_\d+_of_rule/)
-                    { $desc = $self.{"rules"}{$name}.expected }
-                $item = Parse::RecDescent::Subrule.new($name,
-                                       $lookahead,
-                                       $line,
-                                       $desc,
-                                       $matchrule,
-                                       $argcode);
-
-                $prod and $prod.additem($item)
-                      or  _no_rule("(sub)rule",$line,$name);
-
-                ?^$matchrule and $rule and $rule.addcall($name);
-            }
-        }
-        elsif ($grammar ~~ m:c:P5/$LONECOLON/   )
-        {
-            _error("Unexpected colon encountered", $line);
-            _hint("Did you mean \"|\" (to start a new production)?
-                   Or perhaps you forgot that the colon
-                   in a rule definition must be
-                   on the same line as the rule name?");
-        }
-        elsif ($grammar ~~ m:c:P5/$ACTION/   ) # BAD ACTION, ALREADY FAILED
-        {
-            _error("Malformed action encountered",
-                   $line);
-            _hint("Did you forget the closing curly bracket
-                   or is there a syntax error in the action?");
-        }
-        elsif ($grammar ~~ m:c:P5/$OTHER/   )
-        {
-            _error("Untranslatable item encountered: \"$1\"",
-                   $line);
-            _hint("Did you misspell \"$1\"
-                   or forget to comment it out?");
-        }
-
-        if ($lookaheadspec ~~ tr:P5 /././ > 3)
-        {
-            $lookaheadspec ~~ s:P5/\A\s+//;
-            $lookahead = $lookahead <0
-                    ?? 'a negative lookahead ("...!")'
-                    !! 'a positive lookahead ("...")' ;
-            _warn(1,"Found two or more lookahead specifiers in a
-                   row.",$line)
-            and
-            _hint("Multiple positive and/or negative lookaheads
-                   are simply multiplied together to produce a
-                   single positive or negative lookahead
-                   specification. In this case the sequence
-                   \"$lookaheadspec\" was reduced to $lookahead.
-                   Was this your intention?");
-        }
-        $lookahead = 0;
-        $lookaheadspec = "";
-
-        my $FOO = '\G\s+'; # XXX
-        $grammar ~~ m:c:P5/$FOO/;
-    }
-
-    if ($must_pop_lines) {
-        pop @lines;
-    }
-
-    unless ($ERRORS or $isimplicit or ?^$::RD_CHECK)
-    {
-        $self._check_grammar();
-    }
-
-    unless ($ERRORS or $isimplicit or $Parse::RecDescent::compiling)
-    {
-        my $code = $self._code();
-        if (defined $::RD_TRACE)
-        {
-            my $mode = ($nextnamespace eq "namespace000002") ?? '>' !! '>>';
-            $*ERR.print("printing code (", length($code),") to RD_TRACE\n");
-# XXX            local *TRACE_FILE;
-            open TRACE_FILE, $mode, "RD_TRACE"
-            and TRACE_FILE.print("my \$ERRORS;\n$code")
-            and close TRACE_FILE;
-        }
-
-        unless ( eval "$code 1" )
-        {
-            _error("Internal error in generated parser code!");
-            $! ~~ s:P5/at grammar/in grammar at/;
-            _hint($!);
-        }
-    }
-
-    if ($ERRORS and ?^_verbosity("HINT"))
-    {
-# XXX        local $::RD_HINT = defined $::RD_HINT ?? $::RD_HINT !! 1;
-        _hint('Set $::RD_HINT (or -RD_HINT if you\'re using "perl -s")
-               for hints on fixing these problems.  Use $::RD_HINT = 0
-               to disable this message.');
-    }
-    if ($ERRORS) { $ERRORS=0; return }
-    return $self;
-}
-
-
-sub _addstartcode
-{
-    my ($self, $code) = @_;
-    $code ~~ s:P5/\A\s*\{(.*)\}\Z/$1/;
-
-    $self.{"startcode"} ~= "$code;\n";
-}
-
-# CHECK FOR GRAMMAR PROBLEMS....
-
-sub _check_insatiable
-{
-    my ($subrule,$repspec,$grammar,$line) = @_;
-    pos($grammar)=pos(@_[2]);
-    return if $grammar ~~ m:c:P5/$OPTIONAL/ || $grammar ~~ m:c:P5/$ANY/;
-    my $min = 1;
-    if ( $grammar ~~ m:c:P5/$MANY/
-      || $grammar ~~ m:c:P5/$EXACTLY/
-      || $grammar ~~ m:c:P5/$ATMOST/
-      || $grammar ~~ m:c:P5/$BETWEEN/ #&& do { $min=$1; 1 }
-      || $grammar ~~ m:c:P5/$ATLEAST/ #&& do { $min=$1; 1 }
-      || $grammar ~~ m:c:P5/$SUBRULE(?!\s*:)/
-       )
-    {
-        return unless $0 eq $subrule && $min > 0;
-        my $current_match = substr($grammar, (map {.to},$/[*])[0], (map {.from},$/[*])[0] - (map {.to},$/[*])[0]);
-        _warn(3,"Subrule sequence \"$subrule($repspec) $current_match\" will
-               (almost certainly) fail.",$line)
-        and
-        _hint("Unless subrule \"$subrule\" performs some cunning
-               lookahead, the repetition \"$subrule($repspec)\" will
-               insatiably consume as many matches of \"$subrule\" as it
-               can, leaving none to match the \"$current_match\" that follows.");
-    }
-}
-
-sub _check_grammar 
-{
-    my $self = shift;
-    my $rules = $self.{"rules"};
-    my $rule;
-    for ( values %$rules ) -> $rule
-    {
-        next if ?^ $rule.{"changed"};
-
-    # CHECK FOR UNDEFINED RULES
-
-        my $call;
-        for ( @($rule.{"calls"}) ) -> $call
-        {
-            if (?^defined $($rules){$call}
-              &&?^defined &("Parse::RecDescent::$call"))
-            {
-                if (?^defined $::RD_AUTOSTUB)
-                {
-                    _warn(3,"Undefined (sub)rule \"$call\"
-                          used in a production.")
-                    and
-                    _hint("Will you be providing this rule
-                           later, or did you perhaps
-                           misspell \"$call\"? Otherwise
-                           it will be treated as an
-                           immediate \<reject\>.");
-                    eval "sub $self.{"namespace"}::$call {"undef"}";
-                }
-                else    # EXPERIMENTAL
-                {
-                    my $rule = qq{'$call'};
-                    if ($::RD_AUTOSTUB and $::RD_AUTOSTUB ne "1") {
-                        $rule = $::RD_AUTOSTUB;
-                    }
-                    _warn(1,"Autogenerating rule: $call")
-                    and
-                    _hint("A call was made to a subrule
-                           named \"$call\", but no such
-                           rule was specified. However,
-                           since \$::RD_AUTOSTUB
-                           was defined, a rule stub
-                           ($call : $rule) was
-                           automatically created.");
-
-                    $self._generate("$call: $rule",0,1);
-                }
-            }
-        }
-
-    # CHECK FOR LEFT RECURSION
-
-        if ($rule.isleftrec($rules))
-        {
-            _error("Rule \"$rule.{"name"}\" is left-recursive.");
-            _hint("Redesign the grammar so it's not left-recursive.
-                   That will probably mean you need to re-implement
-                   repetitions using the '(s)' notation.
-                   For example: \"$rule.{"name"}\(s\)\".");
-            next;
-        }
-
-    # CHECK FOR PRODUCTIONS FOLLOWING EMPTY PRODUCTIONS
-      {
-          my $hasempty;
-          my $prod;
-          for ( @($rule.{"prods"}) ) -> $prod {
-              if ($hasempty) {
-                  _error("Production " ~ $prod.describe ~ " for \"$rule.{"name"}\"
-                         will never be reached (preceding empty production will
-                         always match first).");
-                  _hint("Reorder the grammar so that the empty production
-                         is last in the list or productions.");
-                  last;
-              }
-              $hasempty ||= $prod.isempty();
-          }
-      }
-    }
-}
-
-# GENERATE ACTUAL PARSER CODE
-
-sub _code
-{
-    my $self = shift;
-    my $initial_skip = defined($self.{'skip'}) ?? $self.{'skip'} !! $skip;
-
-    my $code = qq!
-package $self.{qq!namespace!};
-use strict;
-use vars qw(\$skip \$AUTOLOAD $self.{qq!localvars!} );
-\@$self.{qq!namespace!}\::ISA = ();
-\$skip = '$initial_skip';
-$self.{qq!startcode!}
-
-{
-local \$SIG{qq!__WARN__!} = sub {qq!0!};
-# PRETEND TO BE IN Parse::RecDescent NAMESPACE
-*$self.{qq!namespace!}::AUTOLOAD   = sub
-{
-    no strict 'refs';
-!
-# This generated code uses ${"AUTOLOAD"} rather than $AUTOLOAD in
-# order to avoid the circular reference documented here:
-#    https://rt.perl.org/rt3/Public/Bug/Display.html?id=110248
-# As a result of the investigation of
-#    https://rt.cpan.org/Ticket/Display.html?id=53710
-~ qq!
-    \$\{"AUTOLOAD"\} =~ s/^$self.{qq!namespace!}/Parse::RecDescent/;
-    goto &\{\$\{"AUTOLOAD"\}\};
-\}
-\}
-
-!;
-    $code ~= "push \@$self.{"namespace"}\::ISA, 'Parse::RecDescent';";
-    $self.{"startcode"} = '';
-
-    my $rule;
-    for ( values %($self.{"rules"}) ) -> $rule
-    {
-        if ($rule.{"changed"})
-        {
-            $code ~= $rule.code($self.{"namespace"},$self);
-            $rule.{"changed"} = 0;
-        }
-    }
-
-    return $code;
-}
-
-
-# EXECUTING A PARSE....
-
-sub AUTOLOAD    # ($parser, $text; $linenum, @args)
-{
-    croak "Could not find method: $AUTOLOAD\n" unless ref @_[0];
-    my $class = ref(@_[0]) || @_[0];
-    my $text = ref(@_[1]) eq 'SCALAR' ?? $(@_[1]) !! "$_[1]";
-    @_[0].{'lastlinenum'} = _linecount($text);
-    @_[0].{'lastlinenum'} += (@_[2]||0) if @_ > 2;
-    @_[0].{'offsetlinenum'} = @_[0].{'lastlinenum'};
-    @_[0].{'fulltext'} = $text;
-    @_[0].{'fulltextlen'} = length $text;
-    @_[0].{'linecounter_cache'} = {};
-    @_[0].{'deferred'} = [];
-    @_[0].{'errors'} = [];
-    my @args = @_[3..@_.end];
-    my $args = sub { [ @args ] };
-
-    $AUTOLOAD ~~ s:P5/$class/$_[0]->{namespace}/;
-    
-
-# XXX    local $::RD_WARN  = $::RD_WARN  || @_[0].{'__WARN__'};
-# XXX    local $::RD_HINT  = $::RD_HINT  || @_[0].{'__HINT__'};
-# XXX    local $::RD_TRACE = $::RD_TRACE || @_[0].{'__TRACE__'};
-
-    croak "Unknown starting rule ($AUTOLOAD) called\n"
-        unless defined &$AUTOLOAD;
-    my $retval = &($AUTOLOAD)(
-        @_[0], # $parser
-        $text, # $text
-        Any, # $repeating
-        Any, # $_noactions
-        $args, # \@args
-        Any, # $_itempos
-    );
-
-
-    if (defined $retval)
-    {
-        for ( @(@_[0].{'deferred'}) ) { &$_; }
-    }
-    else
-    {
-        for ( @(@_[0].{'errors'}) ) { _error(@$_); }
-    }
-
-    if (ref @_[1] eq 'SCALAR') { $(@_[1]) = $text }
-
-    $ERRORS = 0;
-    return $retval;
-}
-
-sub _parserepeat    # RETURNS A REF TO AN ARRAY OF MATCHES
-{
-    my ($parser, $text, $prod, $min, $max, $_noactions, $expectation, $argcode, $_itempos) = @_;
-    my @tokens = ();
-
-    my $itemposfirst;
-    my $reps;
-    for ($reps=0; $reps <$max;)
-    {
-        $expectation.at($text);
-        my $_savetext = $text;
-        my $prevtextlen = length $text;
-        my $_tok;
-        if (?^ defined ($_tok = &$prod($parser,$text,1,$_noactions,$argcode,$_itempos)))
-        {
-            $text = $_savetext;
-            last;
-        }
-
-        if (defined($_itempos) and ?^defined($itemposfirst))
-        {
-            $itemposfirst = Parse::RecDescent::Production::_duplicate_itempos($_itempos);
-        }
-
-        push @tokens, $_tok if defined $_tok;
-        last if ++$reps >= $min and $prevtextlen == length $text;
-    }
-
-    do { $expectation.failed(); return Any} if $reps <$min;
-
-    if (defined $itemposfirst)
-    {
-        Parse::RecDescent::Production::_update_itempos($_itempos, $itemposfirst, Any, [qw (from)]);
-    }
-
-    @_[1] = $text;
-    return [@tokens];
-}
-
-sub set_autoflush {
-    my $orig_selected = select @_[0];
-    $| = 1;
-    select $orig_selected;
-    return;
-}
-
-# ERROR REPORTING....
-
-sub _write_ERROR {
-    my ($errorprefix, $errortext) = @_;
-    return if $errortext !~~ m:P5/\S/;
-    $errorprefix ~~ s:P5/\s+\Z//;
-# XXX    local $^A = q{};
-
-    formline(q:to/END_FORMAT/, $errorprefix, $errortext);
-@>>>>>>>>>>>>>>>>>>>>: ^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-END_FORMAT
-    formline(q:to/END_FORMAT/, $errortext);
-~~                     ^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-END_FORMAT
-    {*STDERR}.print($^A);
-}
-
-# TRACING
-
-my $TRACE_FORMAT = q:to/END_FORMAT/;
-@>|@|||||||||@^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<|
-  | ~~       |^<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<|
-END_FORMAT
-
-my $TRACECONTEXT_FORMAT = q:to/END_FORMAT/;
-@>|@|||||||||@                                      |^<<<<<<<<<<<<<<<<<<<<<<<<<<<
-  | ~~       |                                      |^<<<<<<<<<<<<<<<<<<<<<<<<<<<
-END_FORMAT
-
-sub _write_TRACE {
-    my ($tracelevel, $tracerulename, $tracemsg) = @_;
-    return if $tracemsg !~~ m:P5/\S/;
-    $tracemsg ~~ s:P5/\s*\Z//;
-# XXX    local $^A = q{};
-    my $bar = '|';
-    formline($TRACE_FORMAT, $tracelevel, $tracerulename, $bar, $tracemsg, $tracemsg);
-    {*STDERR}.print($^A);
-}
-
-sub _write_TRACECONTEXT {
-    my ($tracelevel, $tracerulename, $tracecontext) = @_;
-    return if $tracecontext !~~ m:P5/\S/;
-    $tracecontext ~~ s:P5/\s*\Z//;
-# XXX    local $^A = q{};
-    my $bar = '|';
-    formline($TRACECONTEXT_FORMAT, $tracelevel, $tracerulename, $bar, $tracecontext, $tracecontext);
-    {*STDERR}.print($^A);
-}
-
-sub _verbosity
-{
-       defined $::RD_TRACE
-    or defined $::RD_HINT    and  $::RD_HINT   and @_[0] ~~ m:P5/ERRORS|WARN|HINT/
-    or defined $::RD_WARN    and  $::RD_WARN   and @_[0] ~~ m:P5/ERRORS|WARN/
-    or defined $::RD_ERRORS  and  $::RD_ERRORS and @_[0] ~~ m:P5/ERRORS/
-}
-
-sub _error
-{
-    $ERRORS++;
-    return 0 if ?^ _verbosity("ERRORS");
-    my $errortext   = @_[0];
-    my $errorprefix = "ERROR" ~  (@_[1] ?? " (line $_[1])" !! "");
-    $errortext ~~ s:P5/\s+/ /;
-    {*STDERR}.print("\n") if _verbosity("WARN");
-    _write_ERROR($errorprefix, $errortext);
-    return 1;
-}
-
-sub _warn
-{
-    return 0 unless _verbosity("WARN") && ($::RD_HINT || @_[0] >= ($::RD_WARN||1));
-    my $errortext   = @_[1];
-    my $errorprefix = "Warning" ~  (@_[2] ?? " (line $_[2])" !! "");
-    {*STDERR}.print("\n") if _verbosity("HINT");
-    $errortext ~~ s:P5/\s+/ /;
-    _write_ERROR($errorprefix, $errortext);
-    return 1;
-}
-
-sub _hint
-{
-    return 0 unless $::RD_HINT;
-    my $errortext = @_[0];
-    my $errorprefix = "Hint" ~  (@_[1] ?? " (line $_[1])" !! "");
-    $errortext ~~ s:P5/\s+/ /;
-    _write_ERROR($errorprefix, $errortext);
-    return 1;
-}
-
-sub _tracemax
-{
-    if (defined $::RD_TRACE
-        && $::RD_TRACE ~~ m:P5/\d+/
-        && $::RD_TRACE>1
-        && $::RD_TRACE+10 <length(@_[0]))
-    {
-        my $count = length(@_[0]) - $::RD_TRACE;
-        return substr(@_[0],0,$::RD_TRACE/2)
-            ~ "...\<$count\>..."
-            ~ substr(@_[0],-$::RD_TRACE/2);
-    }
-    else
-    {
-        return substr(@_[0],0,500);
-    }
-}
-
-sub _tracefirst
-{
-    if (defined $::RD_TRACE
-        && $::RD_TRACE ~~ m:P5/\d+/
-        && $::RD_TRACE>1
-        && $::RD_TRACE+10 <length(@_[0]))
-    {
-        my $count = length(@_[0]) - $::RD_TRACE;
-        return substr(@_[0],0,$::RD_TRACE) ~ "...\<+$count\>";
-    }
-    else
-    {
-        return substr(@_[0],0,500);
-    }
-}
-
-my $lastcontext = '';
-my $lastrulename = '';
-my $lastlevel = '';
-
-sub _trace
-{
-    my $tracemsg      = @_[0];
-    my $tracecontext  = @_[1]||$lastcontext;
-    my $tracerulename = @_[2]||$lastrulename;
-    my $tracelevel    = @_[3]||$lastlevel;
-    if ($tracerulename) { $lastrulename = $tracerulename }
-    if ($tracelevel)    { $lastlevel = $tracelevel }
-
-    $tracecontext ~~ s:P5/\n/\\n/;
-    $tracecontext ~~ s:P5/\s+/ /;
-    $tracerulename = qq{$tracerulename};
-    _write_TRACE($tracelevel, $tracerulename, $tracemsg);
-    if ($tracecontext ne $lastcontext)
-    {
-        if ($tracecontext)
-        {
-            $lastcontext = _tracefirst($tracecontext);
-            $tracecontext = qq{"$tracecontext"};
-        }
-        else
-        {
-            $tracecontext = qq{\<NO TEXT LEFT\>};
-        }
-        _write_TRACECONTEXT($tracelevel, $tracerulename, $tracecontext);
-    }
-}
-
-sub _matchtracemessage
-{
-    my ($self, $reject) = @_;
-
-    my $prefix = '';
-    my $postfix = '';
-    my $matched = not $reject;
-    my @t = ("Matched", "Didn't match");
-    if (exists $self.{'lookahead'} and $self.{'lookahead'})
-    {
-        $postfix = $reject ?? "(reject)" !! "(keep)";
-        $prefix = "...";
-        if ($self.{'lookahead'} < 0)
-        {
-            $prefix ~= '!';
-            $matched = not $matched;
-        }
-    }
-    $prefix ~ ($matched ?? @t[0] !! @t[1]) ~ $postfix;
-}
-
-sub _parseunneg
-{
-    _parse(@_[0],@_[1],@_[3],@_[4]);
-    if (@_[2] <0)
-    {
-        _error("Can't negate \"$_[4]\".",@_[3]);
-        _hint("You can't negate $_[0]. Remove the \"...!\" before
-               \"$_[4]\".");
-        return 0;
-    }
-    return 1;
-}
-
-sub _parse
-{
-    my $what = @_[3];
-       $what ~~ s:P5/^\s+//;
-    if (@_[1])
-    {
-        _warn(3,"Found $_[0] ($what) after an unconditional \<error\>",@_[2])
-        and
-        _hint("An unconditional \<error\> always causes the
-               production containing it to immediately fail.
-               \u$_[0] that follows an \<error\>
-               will never be reached.  Did you mean to use
-               \<error?\> instead?");
-    }
-
-    return if ?^ _verbosity("TRACE");
-    my $errortext = "Treating \"$what\" as $_[0]";
-    my $errorprefix = "Parse::RecDescent";
-    $errortext ~~ s:P5/\s+/ /;
-    _write_ERROR($errorprefix, $errortext);
-}
-
-sub _linecount {
-    scalar substr(@_[0], pos @_[0]||0) ~~ tr:P5/\n//
-}
-
-sub Precompile
-{
-    my $self = shift;
-    my %opt = ( -standalone => 0 );
-    if ('HASH' eq ref @_[0]) {
-        %opt = (%opt, %(@_[0]));
-        shift;
-    }
-    my ($grammar, $class, $sourcefile) = @_;
-
-    $class ~~ m:P5/^(\w+::)*\w+$/ or croak("Bad class name: $class");
-
-    my $modulefile = $class;
-    $modulefile ~~ s:P5/.*:://;
-    $modulefile ~= ".pm";
-
-    my $runtime_package = 'Parse::RecDescent::_Runtime';
-    my $code;
-
-# XXX    local *OUT;
-    open OUT, "\>", $modulefile
-      or croak("Can't write to new module file '$modulefile'");
-
-    $*ERR.print("precompiling grammar from file '$sourcefile'\n",
-      "to class $class in module file '$modulefile'\n")
-      if $grammar && $sourcefile;
-
-    # Make the resulting pre-compiled parser stand-alone by
-    # including the contents of Parse::RecDescent as
-    # Parse::RecDescent::Runtime in the resulting precompiled
-    # parser.
-    if (%opt{'-standalone'}) {
-# XXX        local *IN;
-        open IN, '<', $Parse::RecDescent::_FILENAME
-          or croak("Can't open $Parse::RecDescent::_FILENAME for standalone pre-compilation: $!\n");
-        my $exclude = 0;
-        OUT.print("\{\n");
-        while (<IN>) {
-            if ($_ ~~ m:P5/^\s*#\s*ifndef\s+RUNTIME\s*$/) {
-                ++$exclude;
-            }
-            if ($exclude) {
-                if ($_ ~~ m:P5/^\s*#\s*endif\s$/) {
-                    --$exclude;
-                }
-            } else {
-                if ($_ ~~ m:P5/^__END__/) {
-                    last;
-                }
-                s:P5/Parse::RecDescent/$runtime_package/;
-                OUT.print($_);
-            }
-        }
-        close IN;
-        OUT.print("\}\n");
-    }
-
-    $self = Parse::RecDescent.new($grammar,  # $grammar
-                                   1,         # $compiling
-                                   $class     # $namespace
-                             )
-      || croak("Can't compile bad grammar")
-      if $grammar;
-
-    # Do not allow &DESTROY to remove the precompiled namespace
-    delete $self.{'_not_precompiled'};
-
-    for ( keys %($self.{'rules'}) ) {
-        $self.{'rules'}{$_}{changed} = 1;
-    }
-
-
-    OUT.print("package $class;\n");
-    if (not %opt{'-standalone'}) {
-        OUT.print("use Parse::RecDescent;\n");
-    }
-
-    OUT.print("\{ my \$ERRORS;\n\n");
-
-    $code = $self._code();
-    if (%opt{'-standalone'}) {
-        $code ~~ s:P5/Parse::RecDescent/$runtime_package/;
-    }
-    OUT.print($code);
-
-    OUT.print("\}\npackage $class; sub new \{ ");
-    OUT.print("my ");
-
-    require Data::Dumper:from<Perl5>;
-    $code = Data::Dumper.Dump([$self], [qw (self)]);
-    if (%opt{'-standalone'}) {
-        $code ~~ s:P5/Parse::RecDescent/$runtime_package/;
-    }
-    OUT.print($code);
-
-    OUT.print("\}");
-
-    close OUT
-      or croak("Can't write to new module file '$modulefile'");
-}
-
-sub Save
-{
-    my $self = shift;
-    my %opt;
-    if ('HASH' eq ref @_[0]) {
-        %opt = (%opt, %(@_[0]));
-        shift;
-    }
-    my ($class) = @_;
-    $self.{'saving'} = 1;
-    $self.Precompile(Any,$class);
-    $self.{'saving'} = 0;
-}
-
-#ifndef RUNTIME
-sub import  # IMPLEMENT PRECOMPILER BEHAVIOUR UNDER:
-        #    perl -MParse::RecDescent - <grammarfile> <classname>
-{
-# XXX    local *_die = sub { print @_, "\n"; exit };
-
-    my ($package, $file, $line) = caller;
-
-    if ($file eq '-' && $line == 0)
-    {
-        _die("Usage: perl -MLocalTest - \<grammarfile\> \<classname\>")
-            unless @*ARGS == 2;
-
-        my ($sourcefile, $class) = @*ARGS;
-
-# XXX        local *IN;
-        open IN, $sourcefile
-            or _die(qq{Can't open grammar file "$sourcefile"});
-# XXX        local $*IN.input-line-separator(); #
-        my $grammar = <IN>;
-        close IN;
-
-        Parse::RecDescent.Precompile($grammar, $class, $sourcefile);
-        exit;
-    }
-}
 
 }; class main {
 

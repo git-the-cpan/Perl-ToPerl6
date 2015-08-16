@@ -579,7 +579,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     2,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -607,7 +607,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     1,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -635,7 +635,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     1,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -663,7 +663,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     0,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -696,7 +696,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     3,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -724,7 +724,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     0,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -752,7 +752,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     3,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -792,7 +792,7 @@ is(
         {-profile  => $profile, -severity => 1, -theme => 'core'}
     ),
     2,
-    'per-policy no-mogrify',
+    'per-transformer no-mogrify',
 );
 }
 
@@ -855,7 +855,7 @@ is(
 # only return one Transformation at a time.  But the next three cases
 # involve transformers that apply to the whole document and can return
 # multiple transformations at a time.  These tests make sure that the 'no
-# mogrify' pragmas are effective with those Policies
+# mogrify' pragmas are effective with those Transformers
 #-----------------------------------------------------------------------------
 
 $code = <<'END_PERL';

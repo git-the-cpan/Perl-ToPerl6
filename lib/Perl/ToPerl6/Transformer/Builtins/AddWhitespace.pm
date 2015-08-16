@@ -1,4 +1,4 @@
-package Perl::ToPerl6::Transformer::Arrays::FormatArrayQws;
+package Perl::ToPerl6::Transformer::Builtins::AddWhitespace;
 
 use 5.006001;
 use strict;
@@ -6,46 +6,45 @@ use warnings;
 use Readonly;
 
 use Perl::ToPerl6::Utils qw{ :characters :severities };
-use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_quotelike_words_like };
+use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_word };
 
 use base 'Perl::ToPerl6::Transformer';
 
-our $VERSION = '0.031';
+our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
-Readonly::Scalar my $DESC => q{Transform qw(...) to qw (...)};
-Readonly::Scalar my $EXPL =>
-    q{qw<>, qw{} &c are fine, but qw() is now a function call. Add ' ' to avoid this};
+Readonly::Scalar my $DESC => q{Transform my(...) to my (...)};
+Readonly::Scalar my $EXPL => q{Transform my(...) to my (...)};
 
 #-----------------------------------------------------------------------------
 
-sub supported_parameters { return ()                             }
-sub default_severity     { return $SEVERITY_HIGHEST              }
-sub default_themes       { return qw(core bugs)                  }
+my %map = (
+    my => 1,
+    our => 1,
+    print => 1,
+);
+
+sub supported_parameters { return ()                }
+sub default_severity     { return $SEVERITY_HIGHEST }
+sub default_themes       { return qw(core bugs)     }
 sub applies_to           {
     return sub {
-        is_ppi_token_quotelike_words_like($_[1],qr{^qw\(})
+        is_ppi_token_word($_[1], %map)
     }
 }
 
 #-----------------------------------------------------------------------------
 
-#
-# Note to the reader:
-#
-# A PPI::Token::QuoteLike::Words object contains a single string which has the
-# entire 'qw{...}' token. Therefore we can't add a Token::Whitespace between
-# the 'qw' and '{..}' like we can with loops and conditionals.
-#
-
 sub transform {
     my ($self, $elem, $doc) = @_;
-    my $old_content = $elem->content;
 
-    $old_content =~ s{^qw\(}{qw (};
-
-    $elem->set_content( $old_content );
+    if ( $elem->next_sibling and
+         not $elem->next_sibling->isa('PPI::Token::Whitespace') ) {
+        $elem->insert_after(
+            PPI::Token::Whitespace->new(' ')
+        );
+    }
 
     return $self->transformation( $DESC, $EXPL, $elem );
 }
@@ -60,7 +59,7 @@ __END__
 
 =head1 NAME
 
-Perl::ToPerl6::Transformer::Array::FormatArrayQws - Format qw() to qw ()
+Perl::ToPerl6::Transformer::Buiiltins::AddWhitespace - Format my(), our(), print()
 
 
 =head1 AFFILIATION
@@ -70,11 +69,11 @@ This Transformer is part of the core L<Perl::ToPerl6|Perl::ToPerl6> distribution
 
 =head1 DESCRIPTION
 
-Perl6 qw() operates almost exactly like Perl5 qw() but with one corner case - C<qw(a b c)>, like any bareword followed by an open parenthesis, is treated as a function call. This Transformer places a whitespace between C<qw> and C<(...)> in order to disambiguate, like so:
+Perl6 requires whitespace after C<my>, C<our>, C<print> etc. in order to not confuse these builtins with methods:
 
-  qw(a b c) --> qw (a b c)
-  qw{a b c} --> qw{a b c}
-  qw<a b c> --> qw{a b c}
+  my() --> my ()
+  our() --> our ()
+  print() --> print ()
 
 =head1 CONFIGURATION
 

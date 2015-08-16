@@ -30,6 +30,17 @@ sub applies_to           {
 }
 
 #-----------------------------------------------------------------------------
+#
+# A fairly comprehensive list of edge case handling:
+#
+#   "\o" --> "o". It's illegal in Perl5, but may be encountered.
+
+# "\o" is illegal in Perl5, so it shouldn't be encountered.
+# "\o1" is illegal in Perl5, so it shouldn't be encountered.
+# "\0" is legal though.
+# "\c" is illegal in Perl5, so it shouldn't be encountered.
+#
+#-----------------------------------------------------------------------------
 
 # Tokenizer II: Electric Boogaloo.
 #
@@ -394,7 +405,12 @@ warn "Interpolating perl code.";
 #            $collected .= $v;
 #        }
 
+eval {
     set_string($elem,$new_content);
+};
+if ( $@ ) {
+    die "set_string broke! Please report this: ".Dump($elem);
+}
 
     return $self->transformation( $DESC, $EXPL, $elem );
 }
