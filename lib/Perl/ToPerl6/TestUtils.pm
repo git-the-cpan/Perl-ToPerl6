@@ -22,8 +22,6 @@ use Perl::ToPerl6::Exception::Fatal::Internal qw{ &throw_internal };
 use Perl::ToPerl6::Utils qw{ :severities :data_conversion transformer_long_name };
 use Perl::ToPerl6::TransformerFactory (-test => 1);
 
-our $VERSION = '0.03';
-
 Readonly::Array our @EXPORT_OK => qw(
     ptransform ptransform_with_transformations
     transform  transform_with_transformations
@@ -430,7 +428,7 @@ interface will go through a deprecation cycle.
     END_CODE
 
     # Critique code against all loaded transformers...
-    my $perl_mogrify_config = { -severity => 2 };
+    my $perl_mogrify_config = { -necessity => 2 };
     my $transformation_count = transform( \$code, $perl_mogrify_config);
 
     # Critique code against one transformer...
@@ -640,15 +638,6 @@ last test.
 
 Note that nowhere within the F<.run> file itself do you specify the
 transformer that you're testing.  That's implicit within the filename.
-
-
-=head1 BUGS AND CAVEATS AND TODO ITEMS
-
-Test that we have a t/*/*.run for each lib/*/*.pm
-
-Allow us to specify the nature of the failures, and which one.  If
-there are 15 lines of code, and six of them fail, how do we know
-they're the right six?
 
 
 =head1 AUTHOR

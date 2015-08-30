@@ -21,10 +21,6 @@ use Test::More tests => 153;
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.01';
-
-#-----------------------------------------------------------------------------
-
 test_export();
 test_find_keywords();
 test_is_assignment_operator();
@@ -62,14 +58,14 @@ sub test_export {
     can_ok('main', 'transformer_long_name');
     can_ok('main', 'transformer_short_name');
     can_ok('main', 'precedence_of');
-    can_ok('main', 'severity_to_number');
+    can_ok('main', 'necessity_to_number');
     can_ok('main', 'shebang_line');
     can_ok('main', 'verbosity_to_format');
     can_ok('main', 'is_unchecked_call');
 
     is($SPACE, q< >, 'character constants');
-    is($SEVERITY_LOWEST, 1, 'severity constants');
-    is($POLICY_NAMESPACE, 'Perl::ToPerl6::Transformer', 'Transformer namespace');
+    is($NECESSITY_LOWEST, 1, 'necessity constants');
+    is($TRANSFORMER_NAMESPACE, 'Perl::ToPerl6::Transformer', 'Transformer namespace');
 
     return;
 }
@@ -285,7 +281,7 @@ sub test_is_subroutine_name {
 
 sub test_transformer_long_name_and_transformer_short_name {
     my $short_name = 'Baz::Nuts';
-    my $long_name  = "${POLICY_NAMESPACE}::$short_name";
+    my $long_name  = "${TRANSFORMER_NAMESPACE}::$short_name";
     is( transformer_long_name(  $short_name ), $long_name,  'transformer_long_name'  );
     is( transformer_long_name(  $long_name  ), $long_name,  'transformer_long_name'  );
     is( transformer_short_name( $short_name ), $short_name, 'transformer_short_name' );

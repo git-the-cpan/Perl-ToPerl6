@@ -1,3 +1,0 @@
-Sorry, this file has been truncated by Gitpan.
-It was 379 megs which exceeds Github's limit of 100 megs per file.
-You can get the file from the original archive at http://backpan.cpan.org/authors/id/J/JG/JGOFF/Perl-ToPerl6-0.031.tar.gz

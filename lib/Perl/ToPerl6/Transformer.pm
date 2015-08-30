@@ -21,7 +21,7 @@ use Perl::ToPerl6::Utils qw<
     is_integer
     transformer_long_name
     transformer_short_name
-    severity_to_number
+    necessity_to_number
 >;
 use Perl::ToPerl6::Utils::DataConversion qw< dor >;
 use Perl::ToPerl6::Utils::POD qw<
@@ -39,8 +39,6 @@ use Perl::ToPerl6::TransformerParameter qw<>;
 use Perl::ToPerl6::Transformation qw<>;
 
 use Exception::Class;   # this must come after "use P::C::Exception::*"
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -109,12 +107,6 @@ sub new {
 
 #-----------------------------------------------------------------------------
 
-sub is_safe {
-    return $TRUE;
-}
-
-#-----------------------------------------------------------------------------
-
 sub initialize_if_enabled {
     return $TRUE;
 }
@@ -151,12 +143,10 @@ sub __set_base_parameters {
     my $config = $self->__get_config();
     my $errors = Perl::ToPerl6::Exception::AggregateConfiguration->new();
 
-    $self->_set_maximum_transformations_per_document($errors);
-
-    my $user_severity = $config->get_severity();
-    if ( defined $user_severity ) {
-        my $normalized_severity = severity_to_number( $user_severity );
-        $self->set_severity( $normalized_severity );
+    my $user_necessity = $config->get_necessity();
+    if ( defined $user_necessity ) {
+        my $normalized_necessity = necessity_to_number( $user_necessity );
+        $self->set_necessity( $normalized_necessity );
     }
 
     my $user_set_themes = $config->get_set_themes();
@@ -174,52 +164,6 @@ sub __set_base_parameters {
     if ( $errors->has_exceptions() ) {
         $errors->rethrow();
     }
-
-    return;
-}
-
-#-----------------------------------------------------------------------------
-
-sub _set_maximum_transformations_per_document {
-    my ($self, $errors) = @_;
-
-    my $config = $self->__get_config();
-
-    if ( $config->is_maximum_transformations_per_document_unlimited() ) {
-        return;
-    }
-
-    my $user_maximum_transformations =
-        $config->get_maximum_transformations_per_document();
-
-    if ( not is_integer($user_maximum_transformations) ) {
-        $errors->add_exception(
-            new_parameter_value_exception(
-                'maximum_transformations_per_document',
-                $user_maximum_transformations,
-                undef,
-                "does not look like an integer.\n"
-            )
-        );
-
-        return;
-    }
-    elsif ( $user_maximum_transformations < 0 ) {
-        $errors->add_exception(
-            new_parameter_value_exception(
-                'maximum_transformations_per_document',
-                $user_maximum_transformations,
-                undef,
-                "is not greater than or equal to zero.\n"
-            )
-        );
-
-        return;
-    }
-
-    $self->set_maximum_transformations_per_document(
-        $user_maximum_transformations
-    );
 
     return;
 }
@@ -283,51 +227,23 @@ sub applies_to {
 
 #-----------------------------------------------------------------------------
 
-sub set_maximum_transformations_per_document {
-    my ($self, $maximum_transformations_per_document) = @_;
-
-    $self->{_maximum_transformations_per_document} =
-        $maximum_transformations_per_document;
-
+sub set_necessity {
+    my ($self, $necessity) = @_;
+    $self->{_necessity} = $necessity;
     return $self;
 }
 
 #-----------------------------------------------------------------------------
 
-sub get_maximum_transformations_per_document {
+sub get_necessity {
     my ($self) = @_;
-
-    return
-        exists $self->{_maximum_transformations_per_document}
-            ? $self->{_maximum_transformations_per_document}
-            : $self->default_maximum_transformations_per_document();
+    return $self->{_necessity} || $self->default_necessity();
 }
 
 #-----------------------------------------------------------------------------
 
-sub default_maximum_transformations_per_document {
-    return;
-}
-
-#-----------------------------------------------------------------------------
-
-sub set_severity {
-    my ($self, $severity) = @_;
-    $self->{_severity} = $severity;
-    return $self;
-}
-
-#-----------------------------------------------------------------------------
-
-sub get_severity {
-    my ($self) = @_;
-    return $self->{_severity} || $self->default_severity();
-}
-
-#-----------------------------------------------------------------------------
-
-sub default_severity {
-    return $SEVERITY_LOWEST;
+sub default_necessity {
+    return $NECESSITY_LOWEST;
 }
 
 #-----------------------------------------------------------------------------
@@ -409,7 +325,7 @@ sub transform {
 sub transformation {
     my ( $self, $desc, $expl, $elem ) = @_;
     # HACK!! Use goto instead of an explicit call because P::C::V::new() uses caller()
-    my $sev = $self->get_severity();
+    my $sev = $self->get_necessity();
     @_ = ('Perl::ToPerl6::Transformation', $desc, $expl, $elem, $sev );
     goto &Perl::ToPerl6::Transformation::new;
 }
@@ -460,12 +376,10 @@ sub to_string {
          'a' => sub { dor($self->get_abstract(), $EMPTY) },
          'O' => sub { $self->_format_parameters(@_) },
          'U' => sub { $self->_format_lack_of_parameter_metadata(@_) },
-         'S' => sub { $self->default_severity() },
-         's' => sub { $self->get_severity() },
+         'S' => sub { $self->default_necessity() },
+         's' => sub { $self->get_necessity() },
          'T' => sub { join $SPACE, $self->default_themes() },
          't' => sub { join $SPACE, $self->get_themes() },
-         'V' => sub { dor( $self->default_maximum_transformations_per_document(), $NO_LIMIT ) },
-         'v' => sub { dor( $self->get_maximum_transformations_per_document(), $NO_LIMIT ) },
     );
     return stringf(get_format(), %fspec);
 }
@@ -605,7 +519,7 @@ caused the transformation.
 
 These are the same as the constructor to
 L<Perl::ToPerl6::Transformation|Perl::ToPerl6::Transformation>, but without the
-severity.  The Transformer itself knows the severity.
+necessity.  The Transformer itself knows the necessity.
 
 
 =item C< new_parameter_value_exception( $option_name, $option_value, $source, $message_suffix ) >
@@ -648,54 +562,33 @@ method in Transformer subclasses should lead to significant performance
 increases.
 
 
-=item C< default_maximum_transformations_per_document() >
+=item C< default_necessity() >
 
-Returns the default maximum number of transformations for this transformer to
-report per document.  By default, this not defined, but subclasses may
-override this.
-
-
-=item C< get_maximum_transformations_per_document() >
-
-Returns the maximum number of transformations this transformer will report for a
-single document.  If this is not defined, then there is no limit.  If
-L</set_maximum_transformations_per_document()> has not been invoked, then
-L</default_maximum_transformations_per_document()> is returned.
-
-
-=item C< set_maximum_transformations_per_document() >
-
-Specify the maximum transformations that this transformer should report for a
-document.
-
-
-=item C< default_severity() >
-
-Returns the default severity for violating this Transformer.  See the
-C<$SEVERITY> constants in L<Perl::ToPerl6::Utils|Perl::ToPerl6::Utils>
-for an enumeration of possible severity values.  By default, this
-method returns C<$SEVERITY_LOWEST>.  Authors of Perl::ToPerl6::Transformer
+Returns the default necessity for violating this Transformer.  See the
+C<$NECESSITY> constants in L<Perl::ToPerl6::Utils|Perl::ToPerl6::Utils>
+for an enumeration of possible necessity values.  By default, this
+method returns C<$NECESSITY_LOWEST>.  Authors of Perl::ToPerl6::Transformer
 subclasses should override this method to return a value that they
 feel is appropriate for their Transformer.  In general, Polices that are
-widely accepted or tend to prevent bugs should have a higher severity
+widely accepted or tend to prevent bugs should have a higher necessity
 than those that are more subjective or cosmetic in nature.
 
 
-=item C< get_severity() >
+=item C< get_necessity() >
 
-Returns the severity of violating this Transformer.  If the severity has
-not been explicitly defined by calling C<set_severity>, then the
-C<default_severity> is returned.  See the C<$SEVERITY> constants in
+Returns the necessity of violating this Transformer.  If the necessity has
+not been explicitly defined by calling C<set_necessity>, then the
+C<default_necessity> is returned.  See the C<$NECESSITY> constants in
 L<Perl::ToPerl6::Utils|Perl::ToPerl6::Utils> for an enumeration of
-possible severity values.
+possible necessity values.
 
 
-=item C< set_severity( $N ) >
+=item C< set_necessity( $N ) >
 
-Sets the severity for violating this Transformer.  Clients of
+Sets the necessity for violating this Transformer.  Clients of
 Perl::ToPerl6::Transformer objects can call this method to assign a
-different severity to the Transformer if they don't agree with the
-C<default_severity>.  See the C<$SEVERITY> constants in
+different necessity to the Transformer if they don't agree with the
+C<default_necessity>.  See the C<$NECESSITY> constants in
 L<Perl::ToPerl6::Utils|Perl::ToPerl6::Utils> for an enumeration of
 possible values.
 
@@ -776,22 +669,6 @@ string depends on the current value returned by C<get_format()>.
 See L<"OVERLOADS"> for the details.
 
 
-=item C<is_safe()>
-
-Answer whether this Transformer can be used to analyze untrusted code, i.e. the
-Transformer doesn't have any potential side effects.
-
-This method returns a true value by default.
-
-An "unsafe" transformer might attempt to compile the code, which, if you have
-C<BEGIN> or C<CHECK> blocks that affect files or connect to databases, is not
-a safe thing to do.  If you are writing a such a Transformer, then you should
-override this method to return false.
-
-By default L<Perl::ToPerl6|Perl::ToPerl6> will not run unsafe transformers.
-
-
-
 =back
 
 
@@ -853,12 +730,12 @@ sequences (C<\n>, C<\t>, etc.).
 
 =item C<%S>
 
-The default severity level of the transformer.
+The default necessity level of the transformer.
 
 
 =item C<%s>
 
-The current severity level of the transformer.
+The current necessity level of the transformer.
 
 
 =item C<%T>
@@ -869,16 +746,6 @@ The default themes for the transformer.
 =item C<%t>
 
 The current themes for the transformer.
-
-
-=item C<%V>
-
-The default maximum number of transformations per document of the transformer.
-
-
-=item C<%v>
-
-The current maximum number of transformations per document of the transformer.
 
 
 =back

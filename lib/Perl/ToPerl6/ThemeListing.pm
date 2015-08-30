@@ -10,8 +10,6 @@ use Perl::ToPerl6::Utils qw< hashify >;
 
 use overload ( q<""> => 'to_string' );
 
-our $VERSION = '0.03';
-
 #-----------------------------------------------------------------------------
 
 sub new {
@@ -67,7 +65,7 @@ to change without notice.
 
 =over
 
-=item C<< new( -transformers => \@POLICY_OBJECTS ) >>
+=item C<< new( -transformers => \@TRANSFORMER_OBJECTS ) >>
 
 Returns a reference to a new C<Perl::ToPerl6::ThemeListing> object.
 
@@ -94,7 +92,7 @@ L<"OVERLOADS"> for more information.
 
 When a L<Perl::ToPerl6::ThemeListing|Perl::ToPerl6::ThemeListing> is
 evaluated in string context, it produces a one-line summary of the
-default severity, transformer name, and default themes for each
+default necessity, transformer name, and default themes for each
 L<Perl::ToPerl6::Transformer|Perl::ToPerl6::Transformer> object that was given to
 the constructor of this C<ThemeListing>.
 

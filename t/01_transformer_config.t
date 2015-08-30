@@ -8,14 +8,9 @@ use Carp qw< confess >;
 
 use Perl::ToPerl6::TransformerConfig;
 
-use Test::More tests => 28;
+use Test::More tests => 24;
 
 #-----------------------------------------------------------------------------
-
-our $VERSION = '0.01';
-
-#-----------------------------------------------------------------------------
-
 
 {
     my $config =
@@ -37,14 +32,9 @@ our $VERSION = '0.01';
         'add_themes is undef when not specified.',
     );
     is(
-        $config->get_severity(),
+        $config->get_necessity(),
         undef,
-        'severity is undef when not specified.',
-    );
-    is(
-        $config->get_maximum_transformations_per_document(),
-        undef,
-        'maximum_transformations_per_document is undef when not specified.',
+        'necessity is undef when not specified.',
     );
     ok(
         $config->is_empty(),
@@ -71,8 +61,7 @@ our $VERSION = '0.01';
                 # Standard parameters
                 set_themes                      => 'thingy',
                 add_themes                      => 'another thingy',
-                severity                        => 'harsh',
-                maximum_transformations_per_document => '2',
+                necessity                        => 'harsh'
             }
         );
 
@@ -92,14 +81,9 @@ our $VERSION = '0.01';
         'add_themes gets saved.',
     );
     is(
-        $config->get_severity(),
+        $config->get_necessity(),
         'harsh',
-        'severity gets saved.',
-    );
-    is(
-        $config->get_maximum_transformations_per_document(),
-        '2',
-        'maximum_transformations_per_document gets saved.',
+        'necessity gets saved.',
     );
     is(
         $config->get('custom_parameter'),
@@ -148,8 +132,7 @@ sub test_standard_parameters_undef_via_get {
         qw<
             set_themes
             add_themes
-            severity
-            maximum_transformations_per_document
+            necessity
             _non_public_data
         >
     ) {

@@ -13,11 +13,9 @@ use Perl::ToPerl6::Utils qw<
 >;
 use Perl::ToPerl6::Utils::Constants qw<
     $PROFILE_STRICTNESS_DEFAULT
-    :color_severity
+    :color_necessity
     >;
 use Perl::ToPerl6::Utils::DataConversion qw< dor >;
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -45,52 +43,52 @@ sub _init {
 
     # Single-value defaults
     $self->{_force}           = dor(delete $args{force},              $FALSE);
+    $self->{_in_place}        = dor(delete $args{'in-place'},         $FALSE);
     $self->{_only}            = dor(delete $args{only},               $FALSE);
     $self->{_profile_strictness} =
         dor(delete $args{'profile-strictness'}, $PROFILE_STRICTNESS_DEFAULT);
     $self->{_single_transformer}   = dor(delete $args{'single-transformer'},    $EMPTY);
-    $self->{_severity}        = dor(delete $args{severity},           $SEVERITY_HIGHEST);
+    $self->{_necessity}        = dor(delete $args{necessity},           $NECESSITY_HIGHEST);
+    $self->{_detail}           = dor(delete $args{detail},           $NECESSITY_LOWEST + 1);
     $self->{_theme}           = dor(delete $args{theme},              $EMPTY);
     $self->{_top}             = dor(delete $args{top},                $FALSE);
     $self->{_verbose}         = dor(delete $args{verbose},            $DEFAULT_VERBOSITY);
-    $self->{_mogrification_fatal} = dor(delete $args{'mogrification-fatal'},  $FALSE);
     $self->{_pager}           = dor(delete $args{pager},              $EMPTY);
-    $self->{_allow_unsafe}    = dor(delete $args{'allow-unsafe'},     $FALSE);
 
-    $self->{_color_severity_highest} = dor(
-        delete $args{'color-severity-highest'},
-        delete $args{'colour-severity-highest'},
-        delete $args{'color-severity-5'},
-        delete $args{'colour-severity-5'},
-        $PROFILE_COLOR_SEVERITY_HIGHEST_DEFAULT,
+    $self->{_color_necessity_highest} = dor(
+        delete $args{'color-necessity-highest'},
+        delete $args{'colour-necessity-highest'},
+        delete $args{'color-necessity-5'},
+        delete $args{'colour-necessity-5'},
+        $PROFILE_COLOR_NECESSITY_HIGHEST_DEFAULT,
     );
-    $self->{_color_severity_high} = dor(
-        delete $args{'color-severity-high'},
-        delete $args{'colour-severity-high'},
-        delete $args{'color-severity-4'},
-        delete $args{'colour-severity-4'},
-        $PROFILE_COLOR_SEVERITY_HIGH_DEFAULT,
+    $self->{_color_necessity_high} = dor(
+        delete $args{'color-necessity-high'},
+        delete $args{'colour-necessity-high'},
+        delete $args{'color-necessity-4'},
+        delete $args{'colour-necessity-4'},
+        $PROFILE_COLOR_NECESSITY_HIGH_DEFAULT,
     );
-    $self->{_color_severity_medium} = dor(
-        delete $args{'color-severity-medium'},
-        delete $args{'colour-severity-medium'},
-        delete $args{'color-severity-3'},
-        delete $args{'colour-severity-3'},
-        $PROFILE_COLOR_SEVERITY_MEDIUM_DEFAULT,
+    $self->{_color_necessity_medium} = dor(
+        delete $args{'color-necessity-medium'},
+        delete $args{'colour-necessity-medium'},
+        delete $args{'color-necessity-3'},
+        delete $args{'colour-necessity-3'},
+        $PROFILE_COLOR_NECESSITY_MEDIUM_DEFAULT,
     );
-    $self->{_color_severity_low} = dor(
-        delete $args{'color-severity-low'},
-        delete $args{'colour-severity-low'},
-        delete $args{'color-severity-2'},
-        delete $args{'colour-severity-2'},
-        $PROFILE_COLOR_SEVERITY_LOW_DEFAULT,
+    $self->{_color_necessity_low} = dor(
+        delete $args{'color-necessity-low'},
+        delete $args{'colour-necessity-low'},
+        delete $args{'color-necessity-2'},
+        delete $args{'colour-necessity-2'},
+        $PROFILE_COLOR_NECESSITY_LOW_DEFAULT,
     );
-    $self->{_color_severity_lowest} = dor(
-        delete $args{'color-severity-lowest'},
-        delete $args{'colour-severity-lowest'},
-        delete $args{'color-severity-1'},
-        delete $args{'colour-severity-1'},
-        $PROFILE_COLOR_SEVERITY_LOWEST_DEFAULT,
+    $self->{_color_necessity_lowest} = dor(
+        delete $args{'color-necessity-lowest'},
+        delete $args{'colour-necessity-lowest'},
+        delete $args{'color-necessity-1'},
+        delete $args{'colour-necessity-1'},
+        $PROFILE_COLOR_NECESSITY_LOWEST_DEFAULT,
     );
 
     # If we're using a pager or not outputing to a tty don't use colors.
@@ -129,9 +127,9 @@ sub _check_for_extra_options {
 #-----------------------------------------------------------------------------
 # Public ACCESSOR methods
 
-sub severity {
+sub necessity {
     my ($self) = @_;
-    return $self->{_severity};
+    return $self->{_necessity};
 }
 
 #-----------------------------------------------------------------------------
@@ -153,6 +151,13 @@ sub exclude {
 sub include {
     my ($self) = @_;
     return $self->{_include};
+}
+
+#-----------------------------------------------------------------------------
+
+sub in_place {
+    my ($self) = @_;
+    return $self->{_in_place};
 }
 
 #-----------------------------------------------------------------------------
@@ -199,16 +204,9 @@ sub pager {
 
 #-----------------------------------------------------------------------------
 
-sub allow_unsafe {
+sub detail {
     my ($self) = @_;
-    return $self->{_allow_unsafe};
-}
-
-#-----------------------------------------------------------------------------
-
-sub mogrification_fatal {
-    my ($self) = @_;
-    return $self->{_mogrification_fatal};
+    return $self->{_detail};
 }
 
 #-----------------------------------------------------------------------------
@@ -227,37 +225,37 @@ sub top {
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_highest {
+sub color_necessity_highest {
     my ($self) = @_;
-    return $self->{_color_severity_highest};
+    return $self->{_color_necessity_highest};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_high {
+sub color_necessity_high {
     my ($self) = @_;
-    return $self->{_color_severity_high};
+    return $self->{_color_necessity_high};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_medium {
+sub color_necessity_medium {
     my ($self) = @_;
-    return $self->{_color_severity_medium};
+    return $self->{_color_necessity_medium};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_low {
+sub color_necessity_low {
     my ($self) = @_;
-    return $self->{_color_severity_low};
+    return $self->{_color_necessity_low};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_lowest {
+sub color_necessity_lowest {
     my ($self) = @_;
-    return $self->{_color_severity_lowest};
+    return $self->{_color_necessity_lowest};
 }
 
 #-----------------------------------------------------------------------------
@@ -324,6 +322,11 @@ L<Perl::ToPerl6::TransformeryParameter|Perl::ToPerl6::TransformerParameter>.  th
 are no default exclusion patterns, then the list will be empty.
 
 
+=item C< detail() >
+
+Returns the default value of the C<detail> setting (0, 1..5)
+
+
 =item C< force() >
 
 Returns the default value of the C<force> flag (Either 1 or 0).
@@ -333,6 +336,11 @@ Returns the default value of the C<force> flag (Either 1 or 0).
 
 Returns a reference to a list of the default inclusion patterns.  If
 there are no default exclusion patterns, then the list will be empty.
+
+
+=item C< in_place() >
+
+Returns the default value of the C<in_place> flag (Either 1 or 0).
 
 
 =item C< only() >
@@ -351,9 +359,9 @@ string.
 Returns the default C<single-transformer> pattern.  (As a string.)
 
 
-=item C< severity() >
+=item C< necessity() >
 
-Returns the default C<severity> setting. (1..5).
+Returns the default C<necessity> setting. (1..5).
 
 
 =item C< theme() >
@@ -383,34 +391,25 @@ Returns the default C<pager> setting. (Either empty string or the pager
 command string).
 
 
-=item C< allow_unsafe() >
+=item C< color_necessity_highest() >
 
-Returns the default C<allow-unsafe> setting. (Either 1 or 0).
+Returns the color to be used for coloring highest necessity transformations.
 
+=item C< color_necessity_high() >
 
-=item C< mogrification_fatal() >
+Returns the color to be used for coloring high necessity transformations.
 
-Returns the default C<mogrification-fatal> setting (Either 1 or 0).
+=item C< color_necessity_medium() >
 
-=item C< color_severity_highest() >
+Returns the color to be used for coloring medium necessity transformations.
 
-Returns the color to be used for coloring highest severity transformations.
+=item C< color_necessity_low() >
 
-=item C< color_severity_high() >
+Returns the color to be used for coloring low necessity transformations.
 
-Returns the color to be used for coloring high severity transformations.
+=item C< color_necessity_lowest() >
 
-=item C< color_severity_medium() >
-
-Returns the color to be used for coloring medium severity transformations.
-
-=item C< color_severity_low() >
-
-Returns the color to be used for coloring low severity transformations.
-
-=item C< color_severity_lowest() >
-
-Returns the color to be used for coloring lowest severity transformations.
+Returns the color to be used for coloring lowest necessity transformations.
 
 =item C< program_extensions() >
 

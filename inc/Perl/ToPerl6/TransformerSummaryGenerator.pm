@@ -20,10 +20,6 @@ use Exception::Class ();  # Must be after P::C::Exception::*
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.031';
-
-#-----------------------------------------------------------------------------
-
 our @EXPORT_OK = qw< generate_transformer_summary >;
 
 #-----------------------------------------------------------------------------
@@ -34,7 +30,7 @@ sub generate_transformer_summary {
 
 
     my $configuration =
-      Perl::ToPerl6::Config->new(-profile => $EMPTY, -severity => 1, -theme => 'core');
+      Perl::ToPerl6::Config->new(-profile => $EMPTY, -necessity => 1, -theme => 'core');
 
     my @transformers = $configuration->all_transformers_enabled_or_not();
     my $transformer_summary = 'lib/Perl/ToPerl6/TransformerSummary.pod';
@@ -53,8 +49,8 @@ Perl::ToPerl6::TransformerSummary - Descriptions of the Transformer modules incl
 
 The following Transformer modules are distributed with Perl::ToPerl6. (There are
 additional Transformers that can be found in add-on distributions.) Each
-Transformer is listed here with its default severity.  If you don't agree with
-the default severity, you can change it in your F<.perlmogrifyrc> file (try
+Transformer is listed here with its default necessity.  If you don't agree with
+the default necessity, you can change it in your F<.perlmogrifyrc> file (try
 C<perlmogrify --profile-proto> for a starting version).  See the documentation
 of each module for its specific details.
 
@@ -64,12 +60,12 @@ of each module for its specific details.
 END_HEADER
 
 
-my $format = <<'END_POLICY';
+my $format = <<'END_TRANSFORMER';
 =head2 L<%s|%s>
 
-%s [Default severity %d]
+%s [Default necessity %d]
 
-END_POLICY
+END_TRANSFORMER
 
 eval {
     foreach my $transformer (@transformers) {
@@ -81,7 +77,7 @@ eval {
             $transformer->get_short_name(),
             $transformer->get_long_name(),
             $module_abstract || '',
-            $transformer->default_severity();
+            $transformer->default_necessity();
     }
 
     1;
@@ -107,17 +103,22 @@ print {$pod_file} <<'END_FOOTER';
 
 =head1 VERSION
 
-This is part of L<Perl::ToPerl6|Perl::ToPerl6> version 1.116.
+This is part of L<Perl::ToPerl6|Perl::ToPerl6> version 0.040
 
 
 =head1 AUTHOR
+
+Jeffrey Goff <drforr@pobox.com>
+
+
+=head1 AUTHOR EMERITUS
 
 Jeffrey Ryan Thalhammer <jeff@imaginative-software.com>
 
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005-2011 Imaginative Software Systems.  All rights reserved.
+Copyright (c) 2015 Jeffrey Goff, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.  The full text of this license

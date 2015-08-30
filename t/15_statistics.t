@@ -10,11 +10,7 @@ use Perl::ToPerl6::TransformerFactory (-test => 1);
 use Perl::ToPerl6::Statistics;
 use Perl::ToPerl6::TestUtils;
 
-use Test::More tests => 18;
-
-#-----------------------------------------------------------------------------
-
-our $VERSION = '0.01';
+use Test::More tests => 17;
 
 #-----------------------------------------------------------------------------
 
@@ -25,7 +21,6 @@ Perl::ToPerl6::TestUtils::block_perlmogrifyrc();
 my $package = 'Perl::ToPerl6::Statistics';
 
 my @methods = qw(
-    average_sub_mccabe
     lines
     modules
     new
@@ -33,7 +28,7 @@ my @methods = qw(
     subs
     total_transformations
     transformations_by_transformer
-    transformations_by_severity
+    transformations_by_necessity
     statements_other_than_subs
     transformations_per_file
     transformations_per_statement
@@ -56,10 +51,10 @@ END_PERL
 
 #-----------------------------------------------------------------------------
 
-my $profile = { '-Arrays::FormatArrayQws' => {} };
+my $profile = { '-Arrays::AddWhitespace' => {} };
 my $mogrify =
     Perl::ToPerl6->new(
-        -severity => 1,
+        -necessity => 1,
         -profile => $profile,
         -theme => 'core',
     );
@@ -69,7 +64,6 @@ my @transformations = $mogrify->transform( \$code );
 #exit;
 
 my %expected_stats = (
-    average_sub_mccabe            => 2,
     lines                         => 5,
     modules                       => 1,
     statements                    => 6,

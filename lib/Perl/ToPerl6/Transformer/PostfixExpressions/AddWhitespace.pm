@@ -5,12 +5,13 @@ use strict;
 use warnings;
 use Readonly;
 
-use Perl::ToPerl6::Utils qw{ :characters :severities };
-use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_word };
+use Perl::ToPerl6::Utils qw{ :severities };
+use Perl::ToPerl6::Utils::PPI qw{
+    is_ppi_token_word
+    insert_trailing_whitespace
+};
 
 use base 'Perl::ToPerl6::Transformer';
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -32,9 +33,9 @@ my %map = (
 
 #-----------------------------------------------------------------------------
 
-sub supported_parameters { return () }
-sub default_severity     { return $SEVERITY_HIGHEST }
-sub default_themes       { return qw(core bugs)     }
+sub supported_parameters { return ()                 }
+sub default_necessity    { return $NECESSITY_HIGHEST }
+sub default_themes       { return qw( core )         }
 sub applies_to           {
     return sub {
         is_ppi_token_word($_[1],%map) and
@@ -47,9 +48,7 @@ sub applies_to           {
 sub transform {
     my ($self, $elem, $doc) = @_;
 
-    $elem->insert_after(
-        PPI::Token::Whitespace->new(' ')
-    );
+    insert_trailing_whitespace($elem);
 
     return $self->transformation( $DESC, $EXPL, $elem );
 }

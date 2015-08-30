@@ -16,14 +16,10 @@ use Test::More;
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.01';
-
-#-----------------------------------------------------------------------------
-
 my $default_configuration =
     Perl::ToPerl6::Config->new(
         -profile => $EMPTY,
-        -severity => 1,
+        -necessity => 1,
         -theme => 'core',
     );
 my @default_transformers = $default_configuration->transformers();
@@ -34,12 +30,12 @@ $transformer_test_count = 4 * @default_transformers;
 foreach my $transformer (@default_transformers) {
     if (
             $transformer->parameter_metadata_available()
-        and not $transformer->isa('Perl::ToPerl6::Transformer::Arrays::FormatArrayQws')
+        and not $transformer->isa('Perl::ToPerl6::Transformer::Arrays::AddWhitespace')
     ) {
         $transformer_test_count += scalar @{$transformer->get_parameters()};
     }
 }
-my $test_count = 18 + $transformer_test_count;
+my $test_count = 20 + $transformer_test_count;
 plan tests => $test_count;
 
 #-----------------------------------------------------------------------------
@@ -96,6 +92,22 @@ is(
 #-----------------------------------------------------------------------------
 
 is(
+    $derived_configuration->detail(),
+    $default_configuration->detail(),
+    'detail',
+);
+
+#-----------------------------------------------------------------------------
+
+is(
+    $derived_configuration->in_place(),
+    $default_configuration->in_place(),
+    'in_place',
+);
+
+#-----------------------------------------------------------------------------
+
+is(
     $derived_configuration->only(),
     $default_configuration->only(),
     'only',
@@ -106,7 +118,7 @@ is(
 is(
     $derived_configuration->profile_strictness(),
     $default_configuration->profile_strictness(),
-    'force',
+    'profile_strictness',
 );
 
 #-----------------------------------------------------------------------------
@@ -120,10 +132,10 @@ is(
 #-----------------------------------------------------------------------------
 
 cmp_ok(
-    $derived_configuration->severity(),
+    $derived_configuration->necessity(),
     q<==>,
-    $default_configuration->severity(),
-    'severity',
+    $default_configuration->necessity(),
+    'necessity',
 );
 
 #-----------------------------------------------------------------------------
@@ -155,41 +167,41 @@ cmp_deeply(
 #-----------------------------------------------------------------------------
 
 is(
-    $derived_configuration->color_severity_highest(),
-    $default_configuration->color_severity_highest(),
-    'color_severity_highest',
+    $derived_configuration->color_necessity_highest(),
+    $default_configuration->color_necessity_highest(),
+    'color_necessity_highest',
 );
 
 #-----------------------------------------------------------------------------
 
 is(
-    $derived_configuration->color_severity_high(),
-    $default_configuration->color_severity_high(),
-    'color_severity_high',
+    $derived_configuration->color_necessity_high(),
+    $default_configuration->color_necessity_high(),
+    'color_necessity_high',
 );
 
 #-----------------------------------------------------------------------------
 
 is(
-    $derived_configuration->color_severity_medium(),
-    $default_configuration->color_severity_medium(),
-    'color_severity_medium',
+    $derived_configuration->color_necessity_medium(),
+    $default_configuration->color_necessity_medium(),
+    'color_necessity_medium',
 );
 
 #-----------------------------------------------------------------------------
 
 is(
-    $derived_configuration->color_severity_low(),
-    $default_configuration->color_severity_low(),
-    'color_severity_low',
+    $derived_configuration->color_necessity_low(),
+    $default_configuration->color_necessity_low(),
+    'color_necessity_low',
 );
 
 #-----------------------------------------------------------------------------
 
 is(
-    $derived_configuration->color_severity_lowest(),
-    $default_configuration->color_severity_lowest(),
-    'color_severity_lowest',
+    $derived_configuration->color_necessity_lowest(),
+    $default_configuration->color_necessity_lowest(),
+    'color_necessity_lowest',
 );
 
 #-----------------------------------------------------------------------------
@@ -230,13 +242,8 @@ SKIP: {
             'transformer names match',
         );
         is(
-            $derived_transformer->get_maximum_transformations_per_document(),
-            $default_transformer->get_maximum_transformations_per_document(),
-            $default_transformer->get_short_name() . ' maximum transformations per document match',
-        );
-        is(
-            $derived_transformer->get_severity(),
-            $default_transformer->get_severity(),
+            $derived_transformer->get_necessity(),
+            $default_transformer->get_necessity(),
             $default_transformer->get_short_name() . ' severities match',
         );
         is(

@@ -5,8 +5,6 @@ use 5.006001;
 use strict;
 use warnings;
 
-our $VERSION = '0.031';
-
 use Carp;
 use English qw< $OS_ERROR $EXECUTABLE_NAME -no_match_vars >;
 
@@ -66,7 +64,7 @@ sub _run_nytprof {
     my @perlmogrify_args =
         qw<
             --noprofile
-            --severity=1
+            --necessity=1
             --theme=core
             --exclude=TidyCode
             --exclude=PodSpelling

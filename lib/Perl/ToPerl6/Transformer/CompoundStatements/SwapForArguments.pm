@@ -5,12 +5,14 @@ use strict;
 use warnings;
 use Readonly;
 
-use Perl::ToPerl6::Utils qw{ :characters :severities };
-use Perl::ToPerl6::Utils::PPI qw{ is_ppi_statement_compound };
+use Perl::ToPerl6::Utils qw{ :severities };
+use Perl::ToPerl6::Utils::PPI qw{
+    is_ppi_statement_compound
+    insert_trailing_whitespace
+    remove_trailing_whitespace
+};
 
 use base 'Perl::ToPerl6::Transformer';
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -21,9 +23,9 @@ Readonly::Scalar my $EXPL =>
 #-----------------------------------------------------------------------------
 
 sub run_after            { return 'Operators::FormatOperators' }
-sub supported_parameters { return () }
-sub default_severity     { return $SEVERITY_HIGHEST }
-sub default_themes       { return qw(core bugs)     }
+sub supported_parameters { return ()                 }
+sub default_necessity    { return $NECESSITY_HIGHEST }
+sub default_themes       { return qw( core )         }
 
 #-----------------------------------------------------------------------------
 
@@ -79,32 +81,22 @@ sub transform {
     # [ q{for}, q{ }, q{(@x)}, q{ }, q{->}, q{ }, q{$x} ]
     #
     if ( $scope_map{$elem->schild(1)->content} ) {
-        if ( $elem->schild(1)->next_sibling->isa('PPI::Token::Whitespace') ) {
-            $elem->schild(1)->next_sibling->remove;
-        }
+        remove_trailing_whitespace($elem->schild(1));
         $elem->schild(1)->delete;
     }
 
-    my $whitespace;
-    if ( $elem->schild(1)->next_sibling->isa('PPI::Token::Whitespace') ) {
-        $whitespace = $elem->schild(1)->next_sibling->clone;
-        $elem->schild(1)->next_sibling->remove;
-    }
+    my $whitespace = remove_trailing_whitespace($elem->schild(1));
     my $loop_variable = $elem->schild(1)->clone;
     $elem->schild(1)->remove;
 
     $elem->schild(1)->insert_after(
         $loop_variable
     );
-    $elem->schild(1)->insert_after(
-        PPI::Token::Whitespace->new(' ')
-    );
+    insert_trailing_whitespace($elem->schild(1));
     $elem->schild(1)->insert_after(
         PPI::Token::Operator->new('->')
     );
-    $elem->schild(1)->insert_after(
-        PPI::Token::Whitespace->new(' ')
-    );
+    insert_trailing_whitespace($elem->schild(1));
 
     return $self->transformation( $DESC, $EXPL, $elem );
 }

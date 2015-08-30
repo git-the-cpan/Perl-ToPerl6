@@ -18,10 +18,6 @@ use Test::More; #plan set below
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.01';
-
-#-----------------------------------------------------------------------------
-
 Perl::ToPerl6::TestUtils::block_perlmogrifyrc();
 
 eval 'use Test::Memory::Cycle; 1'
@@ -45,7 +41,7 @@ eval 'use Test::Memory::Cycle; 1'
     my $code    = q<print foo(); split /this/, $that;>; ## no mogrify (RequireInterpolationOfMetachars)
     my $ppi_doc = PPI::Document->new( \$code );
     my $pc_doc  = Perl::ToPerl6::Document->new( '-source' => $ppi_doc );
-    my $mogrify  = Perl::ToPerl6->new( -severity => 1 );
+    my $mogrify  = Perl::ToPerl6->new( -necessity => 1 );
     my @transformations = $mogrify->transform( $pc_doc );
     confess 'No transformations were created' if not @transformations;
 

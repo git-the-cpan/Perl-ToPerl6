@@ -21,7 +21,7 @@ use Perl::ToPerl6::Transformation qw<>;
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.03';
+our $VERSION = '0.040';
 
 #-----------------------------------------------------------------------------
 
@@ -29,9 +29,7 @@ use Exporter 'import';
 
 Readonly::Array our @EXPORT_OK => qw< run >;
 
-Readonly::Hash our %EXPORT_TAGS => (
-    all             => [ @EXPORT_OK ],
-);
+Readonly::Hash our %EXPORT_TAGS => ( all => [ @EXPORT_OK ] );
 
 #-----------------------------------------------------------------------------
 
@@ -39,8 +37,7 @@ Readonly::Scalar my $DEFAULT_VIOLATIONS_FOR_TOP => 20;
 
 Readonly::Scalar my $EXIT_SUCCESS           => 0;
 Readonly::Scalar my $EXIT_NO_FILES          => 1;
-Readonly::Scalar my $EXIT_HAD_VIOLATIONS    => 2;
-Readonly::Scalar my $EXIT_HAD_FILE_PROBLEMS => 3;
+Readonly::Scalar my $EXIT_HAD_FILE_PROBLEMS => 2;
 
 #-----------------------------------------------------------------------------
 
@@ -58,14 +55,13 @@ sub _out {
 #-----------------------------------------------------------------------------
 
 sub run {
-    my %options    = _get_options();
-    @files         = _get_input(@ARGV);
+    my %options = _get_options();
+    @files      = _get_input(@ARGV);
 
     my ($transformations, $had_error_in_file) = _transform(\%options, @files);
 
     return $EXIT_HAD_FILE_PROBLEMS  if $had_error_in_file;
     return $EXIT_NO_FILES           if not defined $transformations;
-    return $EXIT_HAD_VIOLATIONS     if $transformations;
 
     return $EXIT_SUCCESS;
 }
@@ -78,20 +74,20 @@ sub _get_options {
     _dispatch_special_requests( %opts );
     _validate_options( %opts );
 
-    # Convert severity shortcut options.  If multiple shortcuts
-    # are given, the lowest one wins.  If an explicit --severity
+    # Convert necessity shortcut options.  If multiple shortcuts
+    # are given, the lowest one wins.  If an explicit --necessity
     # option has been given, then the shortcuts are ignored. The
-    # @SEVERITY_NAMES variable is exported by Perl::ToPerl6::Utils.
-    $opts{-severity} ||= first { exists $opts{"-$_"} } @SEVERITY_NAMES;
-    $opts{-severity} ||= first { exists $opts{"-$_"} } ($SEVERITY_LOWEST ..  $SEVERITY_HIGHEST);
+    # @NECESSITY_NAMES variable is exported by Perl::ToPerl6::Utils.
+    $opts{-necessity} ||= first { exists $opts{"-$_"} } @NECESSITY_NAMES;
+    $opts{-necessity} ||= first { exists $opts{"-$_"} } ($NECESSITY_LOWEST ..  $NECESSITY_HIGHEST);
 
 
-    # If --top is specified, default the severity level to 1, unless an
-    # explicit severity is defined.  This provides us flexibility to
-    # report top-offenders across just some or all of the severity levels.
+    # If --top is specified, default the necessity level to 1, unless an
+    # explicit necessity is defined.  This provides us flexibility to
+    # report top-offenders across just some or all of the necessity levels.
     # We also default the --top count to twenty if none is given
     if ( exists $opts{-top} ) {
-        $opts{-severity} ||= 1;
+        $opts{-necessity} ||= 1;
         $opts{-top} ||= $DEFAULT_VIOLATIONS_FOR_TOP;
     }
 
@@ -157,15 +153,15 @@ sub _validate_options {
     }
 
     if (
-            exists $opts{-severity}
+            exists $opts{-necessity}
         &&  (
-                    $opts{-severity} < $SEVERITY_LOWEST
-                ||  $opts{-severity} > $SEVERITY_HIGHEST
+                    $opts{-necessity} < $NECESSITY_LOWEST
+                ||  $opts{-necessity} > $NECESSITY_HIGHEST
             )
     ) {
-        $msg .= qq<Warning: --severity arg "$opts{-severity}" out of range.  >;
-        $msg .= qq<Severities range from "$SEVERITY_LOWEST" (lowest) to >;
-        $msg .= qq<"$SEVERITY_HIGHEST" (highest).\n>;
+        $msg .= qq<Warning: --necessity arg "$opts{-necessity}" out of range.  >;
+        $msg .= qq<Severities range from "$NECESSITY_LOWEST" (lowest) to >;
+        $msg .= qq<"$NECESSITY_HIGHEST" (highest).\n>;
     }
 
 
@@ -315,7 +311,12 @@ sub _render_report {
     Perl::ToPerl6::Transformation::set_format( $fmt );
 
     my $color = $mogrify->config->color();
-    _out $color ? _colorize_by_severity(@transformations) : @transformations;
+    if ( $mogrify->config->detail() ) {
+        @transformations = grep {
+            $_->necessity <= $mogrify->config->detail()
+        } @transformations;
+    }
+    _out $color ? _colorize_by_necessity(@transformations) : @transformations;
 
     return $number_of_transformations;
 }
@@ -360,33 +361,6 @@ sub _report_statistics {
     _out sprintf "%*s %s.\n", $width, $subroutines, 'subroutines/methods';
     _out sprintf "%*s %s.\n", $width, $statements, 'statements';
 
-    my $lines_of_blank = _commaify( $statistics->lines_of_blank() );
-    my $lines_of_comment = _commaify( $statistics->lines_of_comment() );
-    my $lines_of_data = _commaify( $statistics->lines_of_data() );
-    my $lines_of_perl = _commaify( $statistics->lines_of_perl() );
-    my $lines_of_pod = _commaify( $statistics->lines_of_pod() );
-
-    $width =
-        max map { length }
-            $lines_of_blank, $lines_of_comment, $lines_of_data,
-            $lines_of_perl,  $lines_of_pod;
-    _out sprintf "\n%s %s:\n",            $lines, 'lines, consisting of';
-    _out sprintf "    %*s %s.\n", $width, $lines_of_blank, 'blank lines';
-    _out sprintf "    %*s %s.\n", $width, $lines_of_comment, 'comment lines';
-    _out sprintf "    %*s %s.\n", $width, $lines_of_data, 'data lines';
-    _out sprintf "    %*s %s.\n", $width, $lines_of_perl, 'lines of Perl code';
-    _out sprintf "    %*s %s.\n", $width, $lines_of_pod, 'lines of POD';
-
-    my $average_sub_mccabe = $statistics->average_sub_mccabe();
-    if (defined $average_sub_mccabe) {
-        _out
-            sprintf
-                "\nAverage McCabe score of subroutines was %.2f.\n",
-                $average_sub_mccabe;
-        }
-
-    _out "\n";
-
     _out _commaify($statistics->total_transformations()), " transformations.\n";
 
     my $transformations_per_file = $statistics->transformations_per_file();
@@ -414,19 +388,19 @@ sub _report_statistics {
     if ( $statistics->total_transformations() ) {
         _out "\n";
 
-        my %severity_transformations = %{ $statistics->transformations_by_severity() };
-        my @severities = reverse sort keys %severity_transformations;
+        my %necessity_transformations = %{ $statistics->transformations_by_necessity() };
+        my @severities = reverse sort keys %necessity_transformations;
         $width =
             max
-                map { length _commaify( $severity_transformations{$_} ) }
+                map { length _commaify( $necessity_transformations{$_} ) }
                     @severities;
-        foreach my $severity (@severities) {
+        foreach my $necessity (@severities) {
             _out
                 sprintf
-                    "%*s severity %d transformations.\n",
+                    "%*s necessity %d transformations.\n",
                     $width,
-                    _commaify( $severity_transformations{$severity} ),
-                    $severity;
+                    _commaify( $necessity_transformations{$necessity} ),
+                    $necessity;
         }
 
         _out "\n";
@@ -487,13 +461,15 @@ sub _get_option_specification {
         man
         color|colour!
         noprofile
+        in-place!
         only!
         options
         pager=s
         profile|p=s
         profile-proto
         quiet
-        severity=i
+        necessity=i
+        detail=i
         single-transformer|s=s
         stern
         statistics!
@@ -501,13 +477,12 @@ sub _get_option_specification {
         profile-strictness=s
         theme=s
         top:i
-        allow-unsafe
         verbose=s
-        color-severity-highest|colour-severity-highest|color-severity-5|colour-severity-5=s
-        color-severity-high|colour-severity-high|color-severity-4|colour-severity-4=s
-        color-severity-medium|colour-severity-medium|color-severity-3|colour-severity-3=s
-        color-severity-low|colour-severity-low|color-severity-2|colour-severity-2=s
-        color-severity-lowest|colour-severity-lowest|color-severity-1|colour-severity-1=s
+        color-necessity-highest|colour-necessity-highest|color-necessity-5|colour-necessity-5=s
+        color-necessity-high|colour-necessity-high|color-necessity-4|colour-necessity-4=s
+        color-necessity-medium|colour-necessity-medium|color-necessity-3|colour-necessity-3=s
+        color-necessity-low|colour-necessity-low|color-necessity-2|colour-necessity-2=s
+        color-necessity-lowest|colour-necessity-lowest|color-necessity-1|colour-necessity-1=s
         files-with-transformations|l
         files-without-transformations|L
         program-extensions=s@
@@ -516,7 +491,7 @@ sub _get_option_specification {
 
 #-----------------------------------------------------------------------------
 
-sub _colorize_by_severity {
+sub _colorize_by_necessity {
     my @transformations = @_;
     return @transformations if _this_is_windows();
     return @transformations if not eval {
@@ -527,14 +502,14 @@ sub _colorize_by_severity {
 
     my $config = $mogrify->config();
     my %color_of = (
-        $SEVERITY_HIGHEST   => $config->color_severity_highest(),
-        $SEVERITY_HIGH      => $config->color_severity_high(),
-        $SEVERITY_MEDIUM    => $config->color_severity_medium(),
-        $SEVERITY_LOW       => $config->color_severity_low(),
-        $SEVERITY_LOWEST    => $config->color_severity_lowest(),
+        $NECESSITY_HIGHEST   => $config->color_necessity_highest(),
+        $NECESSITY_HIGH      => $config->color_necessity_high(),
+        $NECESSITY_MEDIUM    => $config->color_necessity_medium(),
+        $NECESSITY_LOW       => $config->color_necessity_low(),
+        $NECESSITY_LOWEST    => $config->color_necessity_lowest(),
     );
 
-    return map { _colorize( "$_", $color_of{$_->severity()} ) } @transformations;
+    return map { _colorize( "$_", $color_of{$_->necessity()} ) } @transformations;
 
 }
 
@@ -570,7 +545,7 @@ sub _at_tty {
 
 sub _render_all_transformer_listing {
     # Force P-C parameters, to catch all Transformers on this site
-    my %pc_params = (-profile => $EMPTY, -severity => $SEVERITY_LOWEST);
+    my %pc_params = (-profile => $EMPTY, -necessity => $NECESSITY_LOWEST);
     return _render_transformer_listing( %pc_params );
 }
 
@@ -596,7 +571,7 @@ sub _render_theme_listing {
     require Perl::ToPerl6::ThemeListing;
     require Perl::ToPerl6;
 
-    my %pc_params = (-profile => $EMPTY, -severity => $SEVERITY_LOWEST);
+    my %pc_params = (-profile => $EMPTY, -necessity => $NECESSITY_LOWEST);
     my @transformers = Perl::ToPerl6->new( %pc_params )->transformers();
     my $listing = Perl::ToPerl6::ThemeListing->new( -transformers => \@transformers );
     _out $listing;
@@ -611,7 +586,7 @@ sub _render_profile_prototype {
     require Perl::ToPerl6::ProfilePrototype;
     require Perl::ToPerl6;
 
-    my %pc_params = (-profile => $EMPTY, -severity => $SEVERITY_LOWEST);
+    my %pc_params = (-profile => $EMPTY, -necessity => $NECESSITY_LOWEST);
     my @transformers = Perl::ToPerl6->new( %pc_params )->transformers();
     my $prototype = Perl::ToPerl6::ProfilePrototype->new( -transformers => \@transformers );
     _out $prototype;
@@ -709,6 +684,11 @@ Turn this into an object.
 
 
 =head1 AUTHOR
+
+Jeffrey Goff <drforr@pobox.com>
+
+
+=head1 AUTHOR EMERITUS
 
 Jeffrey Ryan Thalhammer <jeff@imaginative-software.com>
 

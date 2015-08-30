@@ -5,12 +5,16 @@ use strict;
 use warnings;
 use Readonly;
 
-use Perl::ToPerl6::Utils qw{ :characters :severities };
-use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_operator };
+use Perl::ToPerl6::Utils qw{ :severities };
+use Perl::ToPerl6::Utils::PPI qw{
+    is_ppi_token_operator
+    remove_trailing_whitespace
+    insert_trailing_whitespace
+    remove_leading_whitespace
+    insert_leading_whitespace
+};
 
 use base 'Perl::ToPerl6::Transformer';
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -87,12 +91,17 @@ my %mutate = (
 
 #-----------------------------------------------------------------------------
 
-sub supported_parameters { return () }
-sub default_severity     { return $SEVERITY_HIGHEST }
-sub default_themes       { return qw(core bugs)     }
+sub supported_parameters { return ()                 }
+sub default_necessity    { return $NECESSITY_HIGHEST }
+sub default_themes       { return qw( core )         }
 sub applies_to           {
     return sub {
-        is_ppi_token_operator($_[1], %mutate, %before, %after)
+        is_ppi_token_operator($_[1], %mutate, %before, %after) or
+        ( $_[1]->isa('PPI::Token::Label') and
+          $_[1]->content =~ /\:$/ and
+          $_[1]->sprevious_sibling and
+          $_[1]->sprevious_sibling->isa('PPI::Token::Operator') and
+          $_[1]->sprevious_sibling->content eq '?' )
     }
 }
 
@@ -100,6 +109,13 @@ sub applies_to           {
 
 sub transform {
     my ($self, $elem, $doc) = @_;
+    if ( $elem->isa('PPI::Token::Label') ) {
+      my $old_content = $elem->content;
+
+      $old_content =~ s< : $ ><!!>sx;
+
+      $elem->set_content( $old_content );
+    }
 
     # nonassoc ++
     # nonassoc --
@@ -121,7 +137,7 @@ sub transform {
     my $old_content = $elem->content;
 
     $elem->set_content( $mutate{$old_content} ) if
-        exists $mutate{$old_content};;
+        exists $mutate{$old_content};
 
     if ( $old_content eq '=>' ) { # XXX This is a special case.
     }
@@ -139,27 +155,15 @@ $elem->set_content('fff XXX');
     }
 
     if ( $elem->content eq '.' ) {
-        $elem->next_sibling->remove if
-            $elem->next_sibling and
-            $elem->next_sibling->isa('PPI::Token::Whitespace');
-        $elem->previous_sibling->remove if
-            $elem->previous_sibling and
-            $elem->previous_sibling->isa('PPI::Token::Whitespace');
+        remove_trailing_whitespace($elem);
+        remove_leading_whitespace($elem);
     }
 
-    if ( $before{$elem->content} and
-         $elem->previous_sibling and
-         not( $elem->previous_sibling->isa('PPI::Token::Whitespace') ) ) {
-        $elem->insert_before(
-            PPI::Token::Whitespace->new(' ')
-        );
+    if ( $before{$elem->content} ) {
+        insert_leading_whitespace($elem);
     }
-    elsif ( $after{$elem->content} and
-         $elem->next_sibling and
-         not( $elem->next_sibling->isa('PPI::Token::Whitespace') ) ) {
-        $elem->insert_after(
-            PPI::Token::Whitespace->new(' ')
-        );
+    elsif ( $after{$elem->content} ) {
+        insert_trailing_whitespace($elem);
     }
 
     return $self->transformation( $DESC, $EXPL, $elem );

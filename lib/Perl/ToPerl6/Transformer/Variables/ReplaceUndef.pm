@@ -5,12 +5,13 @@ use strict;
 use warnings;
 use Readonly;
 
-use Perl::ToPerl6::Utils qw{ :characters :severities };
-use Perl::ToPerl6::Utils::PPI qw{ is_ppi_token_word };
+use Perl::ToPerl6::Utils qw{ :severities };
+use Perl::ToPerl6::Utils::PPI qw{
+    is_ppi_token_word
+    remove_trailing_whitespace
+};
 
 use base 'Perl::ToPerl6::Transformer';
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -28,9 +29,9 @@ my %map = (
 #-----------------------------------------------------------------------------
 
 sub run_after            { return 'Operators::FormatOperators' }
-sub supported_parameters { return () }
-sub default_severity     { return $SEVERITY_HIGHEST  }
-sub default_themes       { return qw(core bugs)      }
+sub supported_parameters { return ()                 }
+sub default_necessity    { return $NECESSITY_HIGHEST }
+sub default_themes       { return qw( core )         }
 sub applies_to           {
     return sub {
         is_ppi_token_word($_[1], %map)
@@ -51,9 +52,7 @@ sub transform {
             PPI::Token::Word->new(':delete')
         );
         $elem->snext_sibling->snext_sibling->set_content('.');
-        $elem->next_sibling->delete if
-            $elem->next_sibling and
-            $elem->next_sibling->isa('PPI::Token::Whitespace');
+        remove_trailing_whitespace($elem);
         $elem->remove;
     }
     elsif ( $elem->snext_sibling and
@@ -63,9 +62,7 @@ sub transform {
         $elem->snext_sibling->snext_sibling->insert_after(
             PPI::Token::Word->new(':delete')
         );
-        $elem->next_sibling->delete if
-            $elem->next_sibling and
-            $elem->next_sibling->isa('PPI::Token::Whitespace');
+        remove_trailing_whitespace($elem);
         $elem->remove;
     }
     else {

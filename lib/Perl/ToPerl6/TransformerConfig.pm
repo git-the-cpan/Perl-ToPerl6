@@ -6,12 +6,10 @@ use warnings;
 
 use Readonly;
 
-our $VERSION = '0.03';
-
 use Perl::ToPerl6::Exception::AggregateConfiguration;
 use Perl::ToPerl6::Exception::Configuration::Option::Transformer::ParameterValue;
 use Perl::ToPerl6::Exception::Configuration::Option::Transformer::ExtraParameter;
-use Perl::ToPerl6::Utils qw< :booleans :characters severity_to_number >;
+use Perl::ToPerl6::Utils qw< :booleans :characters necessity_to_number >;
 use Perl::ToPerl6::Utils::Constants qw< :profile_strictness >;
 
 #-----------------------------------------------------------------------------
@@ -32,7 +30,7 @@ sub new {
         $self{$NON_PUBLIC_DATA}{_profile_strictness};
 
     foreach my $standard_parameter (
-        qw< maximum_transformations_per_document severity set_themes add_themes >
+        qw< necessity set_themes add_themes >
     ) {
         if ( exists $self{$standard_parameter} ) {
             $non_public_data{"_$standard_parameter"} =
@@ -80,35 +78,10 @@ sub get_add_themes {
 
 #-----------------------------------------------------------------------------
 
-sub get_severity {
+sub get_necessity {
     my ($self) = @_;
 
-    return $self->_get_non_public_data()->{_severity};
-}
-
-#-----------------------------------------------------------------------------
-
-sub is_maximum_transformations_per_document_unlimited {
-    my ($self) = @_;
-
-    my $maximum_transformations = $self->get_maximum_transformations_per_document();
-    if (
-            not defined $maximum_transformations
-        or  $maximum_transformations eq $EMPTY
-        or  $maximum_transformations =~ m<\A $NO_LIMIT \z>xmsio
-    ) {
-        return $TRUE;
-    }
-
-    return $FALSE;
-}
-
-#-----------------------------------------------------------------------------
-
-sub get_maximum_transformations_per_document {
-    my ($self) = @_;
-
-    return $self->_get_non_public_data()->{_maximum_transformations_per_document};
+    return $self->_get_non_public_data()->{_necessity};
 }
 
 #-----------------------------------------------------------------------------
@@ -239,21 +212,9 @@ The value of C<set_themes> in the user's F<.perlmogrifyrc>.
 The value of C<add_themes> in the user's F<.perlmogrifyrc>.
 
 
-=item C< get_severity() >
+=item C< get_necessity() >
 
-The value of C<severity> in the user's F<.perlmogrifyrc>.
-
-
-=item C< is_maximum_transformations_per_document_unlimited() >
-
-Answer whether the value of C<maximum_transformations_per_document> should
-be considered to be unlimited.
-
-
-=item C< get_maximum_transformations_per_document() >
-
-The value of C<maximum_transformations_per_document> in the user's
-F<.perlmogrifyrc>.
+The value of C<necessity> in the user's F<.perlmogrifyrc>.
 
 
 =item C< get($parameter) >
@@ -307,7 +268,7 @@ $PROFILE_STRICTNESS_DEFAULT.
 
 =head1 SEE ALSO
 
-L<Perl::ToPerl6::DEVELOPER/"MAKING YOUR POLICY CONFIGURABLE">
+L<Perl::ToPerl6::DEVELOPER/"MAKING YOUR TRANSFORMER CONFIGURABLE">
 
 
 =head1 AUTHOR

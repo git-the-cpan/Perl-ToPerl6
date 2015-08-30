@@ -12,7 +12,7 @@ use List::MoreUtils qw(any);
 
 use Perl::ToPerl6::Utils qw{
     :characters
-    $POLICY_NAMESPACE
+    $TRANSFORMER_NAMESPACE
     :data_conversion
     transformer_long_name
     transformer_short_name
@@ -29,8 +29,6 @@ use Perl::ToPerl6::Exception::Configuration::NonExistentTransformer qw< >;
 use Perl::ToPerl6::Utils::Constants qw{ :profile_strictness };
 
 use Exception::Class;   # this must come after "use P::C::Exception::*"
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -50,7 +48,7 @@ sub import {
     if ( not @site_transformer_names ) {
         my $eval_worked = eval {
             require Module::Pluggable;
-            Module::Pluggable->import(search_path => $POLICY_NAMESPACE,
+            Module::Pluggable->import(search_path => $TRANSFORMER_NAMESPACE,
                                       require => 1, inner => 0);
             @site_transformer_names = plugins(); #Exported by Module::Pluggable
             1;
@@ -59,16 +57,16 @@ sub import {
         if (not $eval_worked) {
             if ( $EVAL_ERROR ) {
                 throw_generic
-                    qq<Can't load Transformers from namespace "$POLICY_NAMESPACE": $EVAL_ERROR>;
+                    qq<Can't load Transformers from namespace "$TRANSFORMER_NAMESPACE": $EVAL_ERROR>;
             }
 
             throw_generic
-                qq<Can't load Transformers from namespace "$POLICY_NAMESPACE" for an unknown reason.>;
+                qq<Can't load Transformers from namespace "$TRANSFORMER_NAMESPACE" for an unknown reason.>;
         }
 
         if ( not @site_transformer_names ) {
             throw_generic
-                qq<No Transformers found in namespace "$POLICY_NAMESPACE".>;
+                qq<No Transformers found in namespace "$TRANSFORMER_NAMESPACE".>;
         }
     }
 
@@ -83,7 +81,7 @@ sub import {
 
         if ($extra_test_transformers) {
             my @extra_transformer_full_names =
-                map { "${POLICY_NAMESPACE}::$_" } @{$extra_test_transformers};
+                map { "${TRANSFORMER_NAMESPACE}::$_" } @{$extra_test_transformers};
 
             push @site_transformer_names, @extra_transformer_full_names;
         }
@@ -116,10 +114,10 @@ sub _invert_dependencies {
 # Collect the preferences for all the transformers we want to run.
 #
 sub _collect_preferences {
-    my (@policies) = @_;
+    my (@transformers) = @_;
     my $preferences;
 
-    for my $transformer ( @policies ) {
+    for my $transformer ( @transformers ) {
         my $ref_name = ref($transformer);
         $ref_name =~ s< ^ Perl\::ToPerl6\::Transformer\:: ><>x;
         $preferences->{$ref_name} = { };

@@ -5,15 +5,14 @@ use strict;
 use warnings;
 use Readonly;
 
-use Perl::ToPerl6::Utils qw{ :characters :severities };
+use Perl::ToPerl6::Utils qw{ :severities };
 use Perl::ToPerl6::Utils::PPI qw{
     is_ppi_statement_compound
     is_ppi_token_word
+    insert_trailing_whitespace
 };
 
 use base 'Perl::ToPerl6::Transformer';
-
-our $VERSION = '0.03';
 
 #-----------------------------------------------------------------------------
 
@@ -27,6 +26,8 @@ my %map = (
     if      => 1,
     elsif   => 1,
     unless  => 1,
+    given   => 1,
+    when    => 1,
     while   => 1,
     until   => 1,
     for     => 1,
@@ -35,12 +36,14 @@ my %map = (
 
 #-----------------------------------------------------------------------------
 
-sub supported_parameters { return () }
-sub default_severity     { return $SEVERITY_HIGHEST }
-sub default_themes       { return qw(core bugs)     }
+sub supported_parameters { return ()                 }
+sub default_necessity    { return $NECESSITY_HIGHEST }
+sub default_themes       { return qw( core )         }
 sub applies_to           {
     return sub {
-        is_ppi_statement_compound($_[1], %map)
+        is_ppi_statement_compound($_[1], %map) or
+        $_[1]->isa('PPI::Statement::Given') or
+        $_[1]->isa('PPI::Statement::When')
     }
 }
 
@@ -74,11 +77,7 @@ sub transform {
 
     for my $child ( $elem->schildren ) {
         next unless is_ppi_token_word($child, %map);
-        next if $child->next_sibling and
-                $child->next_sibling->isa('PPI::Token::Whitespace');
-        $child->insert_after(
-            PPI::Token::Whitespace->new(' ')
-        );
+        insert_trailing_whitespace($child);
     }
 
     return $self->transformation( $DESC, $EXPL, $elem );

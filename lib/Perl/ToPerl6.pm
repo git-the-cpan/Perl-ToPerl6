@@ -22,7 +22,9 @@ use Perl::ToPerl6::Utils qw< :characters hashify shebang_line >;
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.031';
+our $VERSION = '0.040';
+
+#-----------------------------------------------------------------------------
 
 Readonly::Array our @EXPORT_OK => qw(transform);
 
@@ -123,10 +125,18 @@ sub transform {
         ${$_[-1]} = $doc->serialize;
     }
     unless( ref $source_code ) {
-        open my $fh, '>', $source_code . '.pl6'
-            or die "Could not write to '$source_code.pl6': $!";
-        print $fh $doc->serialize;
-        close $fh;
+        if ( $config->in_place() ) {
+            open my $fh, '>', $source_code
+                or die "Could not overwrite '$source_code': $!";
+            print $fh $doc->serialize;
+            close $fh;
+        }
+        else {
+            open my $fh, '>', $source_code . '.pl6'
+                or die "Could not write to '$source_code.pl6': $!";
+            print $fh $doc->serialize;
+            close $fh;
+        }
     }
     return @transformations;
 }
@@ -150,10 +160,10 @@ sub _gather_transformations {
     # Accumulate statistics
     $self->statistics->accumulate( $doc, \@transformations );
 
-    # If requested, rank transformations by their severity and return the top N.
+    # If requested, rank transformations by their necessity and return the top N.
     if ( @transformations && (my $top = $self->config->top()) ) {
         my $limit = @transformations < $top ? $#transformations : $top-1;
-        @transformations = Perl::ToPerl6::Transformation::sort_by_severity(@transformations);
+        @transformations = Perl::ToPerl6::Transformation::sort_by_necessity(@transformations);
         @transformations = ( reverse @transformations )[ 0 .. $limit ];  #Slicing...
     }
 
@@ -168,9 +178,6 @@ sub _transform {
     my ($transformer, $doc) = @_;
 
     return if not $transformer->prepare_to_scan_document($doc);
-
-    my $maximum_transformations = $transformer->get_maximum_transformations_per_document();
-    return if defined $maximum_transformations && $maximum_transformations == 0;
 
     my @transformations = ();
 
@@ -202,7 +209,6 @@ sub _transform {
                 }
 
                 push @transformations, $transformation;
-                last TYPE if defined $maximum_transformations and @transformations >= $maximum_transformations;
             }
         }
     }
@@ -291,7 +297,7 @@ through a deprecation cycle.
 
 =over
 
-=item C<< new( [ -profile => $FILE, -severity => $N, -theme => $string, -include => \@PATTERNS, -exclude => \@PATTERNS, -top => $N, -only => $B, -profile-strictness => $PROFILE_STRICTNESS_{WARN|FATAL|QUIET}, -force => $B, -verbose => $N ], -color => $B, -pager => $string, -allow-unsafe => $B, -mogrification-fatal => $B) >>
+=item C<< new( [ -profile => $FILE, -necessity => $N, -detail => $N, -theme => $string, -include => \@PATTERNS, -exclude => \@PATTERNS, -top => $N, -in_place => $B, -only => $B, -profile-strictness => $PROFILE_STRICTNESS_{WARN|FATAL|QUIET}, -force => $B, -verbose => $N ], -color => $B, -pager => $string, -mogrification-fatal => $B) >>
 
 =item C<< new() >>
 
@@ -310,25 +316,25 @@ location.  If a configuration file can't be found, or if C<$FILE> is an empty
 string, then all Transformers will be loaded with their default configuration.
 See L<"CONFIGURATION"> for more information.
 
-B<-severity> is the minimum severity level.  Only Transformer modules that have a
-severity greater than C<$N> will be applied.  Severity values are integers
+B<-necessity> is the minimum necessity level.  Only Transformer modules that have a
+necessity greater than C<$N> will be applied.  Necessity values are integers
 ranging from 1 (least severe transformations) to 5 (most severe transformations).  The
-default is 5.  For a given C<-profile>, decreasing the C<-severity> will
+default is 5.  For a given C<-profile>, decreasing the C<-necessity> will
 usually reveal more Transformer transformations. You can set the default value for this
-option in your F<.perlmogrifyrc> file.  Users can redefine the severity level
+option in your F<.perlmogrifyrc> file.  Users can redefine the necessity level
 for any Transformer in their F<.perlmogrifyrc> file.  See L<"CONFIGURATION"> for
 more information.
 
-If it is difficult for you to remember whether severity "5" is the most or
+If it is difficult for you to remember whether necessity "5" is the most or
 least restrictive level, then you can use one of these named values:
 
-    SEVERITY NAME   ...is equivalent to...   SEVERITY NUMBER
+    NECESSITY NAME   ...is equivalent to...   NECESSITY NUMBER
     --------------------------------------------------------
-    -severity => 'gentle'                     -severity => 5
-    -severity => 'stern'                      -severity => 4
-    -severity => 'harsh'                      -severity => 3
-    -severity => 'cruel'                      -severity => 2
-    -severity => 'brutal'                     -severity => 1
+    -necessity => 'gentle'                     -necessity => 5
+    -necessity => 'stern'                      -necessity => 4
+    -necessity => 'harsh'                      -necessity => 3
+    -necessity => 'cruel'                      -necessity => 2
+    -necessity => 'brutal'                     -necessity => 1
 
 The names reflect how severely the code is mogrified: a C<gentle>
 mogrification reports only the most severe transformations, and so on down to a
@@ -340,8 +346,8 @@ Transformers that have a 'bugs' AND 'core' theme:
 
   my $mogrify = Perl::ToPerl6->new( -theme => 'bugs && core' );
 
-Unless the C<-severity> option is explicitly given, setting C<-theme> silently
-causes the C<-severity> to be set to 1.  You can set the default value for
+Unless the C<-necessity> option is explicitly given, setting C<-theme> silently
+causes the C<-necessity> to be set to 1.  You can set the default value for
 this option in your F<.perlmogrifyrc> file.  See the L<"POLICY THEMES"> section
 for more information about themes.
 
@@ -350,10 +356,10 @@ B<-include> is a reference to a list of string C<@PATTERNS>.  Transformer module
 that match at least one C<m/$PATTERN/ixms> will always be loaded, irrespective
 of all other settings.  For example:
 
-    my $mogrify = Perl::ToPerl6->new(-include => ['layout'] -severity => 4);
+    my $mogrify = Perl::ToPerl6->new(-include => ['layout'] -necessity => 4);
 
 This would cause Perl::ToPerl6 to apply all the C<CodeLayout::*> Transformer modules
-even though they have a severity level that is less than 4. You can set the
+even though they have a necessity level that is less than 4. You can set the
 default value for this option in your F<.perlmogrifyrc> file.  You can also use
 C<-include> in conjunction with the C<-exclude> option.  Note that C<-exclude>
 takes precedence over C<-include> when a Transformer matches both patterns.
@@ -362,10 +368,10 @@ B<-exclude> is a reference to a list of string C<@PATTERNS>.  Transformer module
 that match at least one C<m/$PATTERN/ixms> will not be loaded, irrespective of
 all other settings.  For example:
 
-    my $mogrify = Perl::ToPerl6->new(-exclude => ['strict'] -severity => 1);
+    my $mogrify = Perl::ToPerl6->new(-exclude => ['strict'] -necessity => 1);
 
 This would cause Perl::ToPerl6 to not apply the C<RequireUseStrict> and
-C<ProhibitNoStrict> Transformer modules even though they have a severity level that
+C<ProhibitNoStrict> Transformer modules even though they have a necessity level that
 is greater than 1.  You can set the default value for this option in your
 F<.perlmogrifyrc> file.  You can also use C<-exclude> in conjunction with the
 C<-include> option.  Note that C<-exclude> takes precedence over C<-include>
@@ -373,16 +379,23 @@ when a Transformer matches both patterns.
 
 B<-single-transformer> is a string C<PATTERN>.  Only one transformer that matches
 C<m/$PATTERN/ixms> will be used.  Transformers that do not match will be
-excluded.  This option has precedence over the C<-severity>, C<-theme>,
+excluded.  This option has precedence over the C<-necessity>, C<-theme>,
 C<-include>, C<-exclude>, and C<-only> options.  You can set the default value
 for this option in your F<.perlmogrifyrc> file.
 
 B<-top> is the maximum number of Transformations to return when ranked by their
-severity levels.  This must be a positive integer.  Transformations are still
-returned in the order that they occur within the file. Unless the C<-severity>
-option is explicitly given, setting C<-top> silently causes the C<-severity>
+necessity levels.  This must be a positive integer.  Transformations are still
+returned in the order that they occur within the file. Unless the C<-necessity>
+option is explicitly given, setting C<-top> silently causes the C<-necessity>
 to be set to 1.  You can set the default value for this option in your
 F<.perlmogrifyrc> file.
+
+B<-in_place> is a boolean value. If set to a true value, Perl::ToPerl6 will
+replace the existing Perl source with its transformed equivalent. This of
+course overwrites the file's contents, and should be done sparingly, if at all.
+If set to a false value (which is the default), then Perl::ToPerl6 creates a
+new file, adding '.pl6' to the existing filename.  You can set the default
+value for this option in your F<.perlmogrifyrc> file.
 
 B<-only> is a boolean value.  If set to a true value, Perl::ToPerl6 will only
 choose from Transformers that are mentioned in the user's profile.  If set to a
@@ -402,6 +415,11 @@ value makes this situation fatal.  Correspondingly,
 L<Perl::ToPerl6::Utils::Constants/"$PROFILE_STRICTNESS_QUIET"> makes
 Perl::ToPerl6 shut up about these things.
 
+B<-detail> can be an integer (from 0 to 5). If set to a non-zero value, all
+transformations of a necessity equal to or B<less> than B<-detail> will be
+reported on.  You can set the default value for this option in your
+F<.perlmogrifyrc> file.
+
 B<-force> is a boolean value that controls whether Perl::ToPerl6 observes the
 magical C<"## no mogrify"> annotations in your code. If set to a true value,
 Perl::ToPerl6 will analyze all code.  If set to a false value (which is the
@@ -414,21 +432,17 @@ specification.  See L<Perl::ToPerl6::Transformation|Perl::ToPerl6::Transformatio
 explanation of format specifications.  You can set the default value for this
 option in your F<.perlmogrifyrc> file.
 
-B<-unsafe> directs Perl::ToPerl6 to allow the use of Transformers that are
-marked as "unsafe" by the author.  Such transformers may compile untrusted code
-or do other nefarious things.
-
 B<-color> and B<-pager> are not used by Perl::ToPerl6 but is provided for the
 benefit of L<perlmogrify|perlmogrify>.
 
 B<-mogrification-fatal> is not used by Perl::ToPerl6 but is provided for the
 benefit of L<mogrification|mogrification>.
 
-B<-color-severity-highest>, B<-color-severity-high>, B<-color-severity-
-medium>, B<-color-severity-low>, and B<-color-severity-lowest> are not used by
+B<-color-necessity-highest>, B<-color-necessity-high>, B<-color-necessity-
+medium>, B<-color-necessity-low>, and B<-color-necessity-lowest> are not used by
 Perl::ToPerl6, but are provided for the benefit of L<perlmogrify|perlmogrify>.
 Each is set to the Term::ANSIColor color specification to be used to display
-transformations of the corresponding severity.
+transformations of the corresponding necessity.
 
 B<-files-with-transformations> and B<-files-without-transformations> are not used by
 Perl::ToPerl6, but are provided for the benefit of L<perlmogrify|perlmogrify>, to
@@ -502,7 +516,7 @@ those supported by the C<Perl::ToPerl6::new()> method.  Here are some examples:
     @transformations = transform( $some_file );
 
     # Use custom parameters...
-    @transformations = transform( {-severity => 2}, $some_file );
+    @transformations = transform( {-necessity => 2}, $some_file );
 
     # As a one-liner
     %> perl -MPerl::ToPerl6=transform -e 'print transform(shift)' some_file.pm
@@ -532,43 +546,43 @@ block.> For example, putting any or all of these at the top of your
 configuration file will set the default value for the corresponding
 constructor argument.
 
-    severity  = 3                                     #Integer or named level
-    only      = 1                                     #Zero or One
-    force     = 0                                     #Zero or One
-    verbose   = 4                                     #Integer or format spec
-    top       = 50                                    #A positive integer
-    theme     = (pbp || security) && bugs             #A theme expression
-    include   = NamingConventions ClassHierarchies    #Space-delimited list
-    exclude   = Variables  Modules::RequirePackage    #Space-delimited list
-    mogrification-fatal = 1                           #Zero or One
-    color     = 1                                     #Zero or One
-    allow-unsafe = 1                                  #Zero or One
-    pager     = less                                  #pager to pipe output to
+    necessity  = 3                                     #Integer or named level
+    in_place   = 0                                     #Zero or One
+    only       = 1                                     #Zero or One
+    force      = 0                                     #Zero or One
+    detail     = 0                                     #Integer or named level
+    verbose    = 4                                     #Integer or format spec
+    top        = 50                                    #A positive integer
+    theme      = (pbp || security) && bugs             #A theme expression
+    include    = NamingConventions ClassHierarchies    #Space-delimited list
+    exclude    = Variables  Modules::RequirePackage    #Space-delimited list
+    mogrification-fatal = 1                            #Zero or One
+    color               = 1                            #Zero or One
+    pager               = less                         #pager to pipe output to
 
 The remainder of the configuration file is a series of blocks like this:
 
     [Perl::ToPerl6::Transformer::Category::TransformerName]
-    severity = 1
+    necessity = 1
     set_themes = foo bar
     add_themes = baz
-    maximum_transformations_per_document = 57
     arg1 = value1
     arg2 = value2
 
-C<Perl::ToPerl6::Transformer::Category::TransformerName> is the full name of a module
-that implements the transformer.  The Transformer modules distributed with Perl::ToPerl6
-have been grouped into categories according to the table of contents in Damian
-Conway's book B<Perl Best Practices>. For brevity, you can omit the
-C<'Perl::ToPerl6::Transformer'> part of the module name.
+C<Perl::ToPerl6::Transformer::Category::TransformerName> is the full name of a
+module that implements the transformer.  The Transformer modules distributed
+with Perl::ToPerl6 have been grouped into categories according to token type.
+For brevity, you can omit the C<'Perl::ToPerl6::Transformer'> part of the
+module name.
 
-C<severity> is the level of importance you wish to assign to the Transformer.  All
-Transformer modules are defined with a default severity value ranging from 1 (least
-severe) to 5 (most severe).  However, you may disagree with the default
-severity and choose to give it a higher or lower severity, based on your own
-coding philosophy.  You can set the C<severity> to an integer from 1 to 5, or
+C<necessity> is the level of importance you wish to assign to the Transformer.
+All Transformer modules are defined with a default necessity value ranging from
+1 (least severe) to 5 (most severe).  However, you may disagree with the default
+necessity and choose to give it a higher or lower necessity, based on your own
+coding philosophy.  You can set the C<necessity> to an integer from 1 to 5, or
 use one of the equivalent names:
 
-    SEVERITY NAME ...is equivalent to... SEVERITY NUMBER
+    NECESSITY NAME ...is equivalent to... NECESSITY NUMBER
     ----------------------------------------------------
     gentle                                             5
     stern                                              4
@@ -580,31 +594,24 @@ The names reflect how severely the code is mogrified: a C<gentle>
 mogrification reports only the most severe transformations, and so on down to a
 C<brutal> mogrification which reports even the most minor transformations.
 
-C<set_themes> sets the theme for the Transformer and overrides its default theme.
-The argument is a string of one or more whitespace-delimited alphanumeric
+C<set_themes> sets the theme for the Transformer and overrides its default theme.  The argument is a string of one or more whitespace-delimited alphanumeric
 words.  Themes are case-insensitive.  See L<"POLICY THEMES"> for more
 information.
 
-C<add_themes> appends to the default themes for this Transformer.  The argument is
-a string of one or more whitespace-delimited words. Themes are case-
+C<add_themes> appends to the default themes for this Transformer.  The argument
+is a string of one or more whitespace-delimited words. Themes are case-
 insensitive.  See L<"POLICY THEMES"> for more information.
 
-C<maximum_transformations_per_document> limits the number of Transformations the Transformer
-will return for a given document.  Some Transformers have a default limit; see
-the documentation for the individual Transformers to see whether there is one.
-To force a Transformer to not have a limit, specify "no_limit" or the empty string for
-the value of this parameter.
-
 The remaining key-value pairs are configuration parameters that will be passed
-into the constructor for that Transformer.  The constructors for most Transformer
-objects do not support arguments, and those that do should have reasonable
-defaults.  See the documentation on the appropriate Transformer module for more
-details.
+into the constructor for that Transformer.  The constructors for most
+Transformer objects do not support arguments, and those that do should have
+reasonable defaults.  See the documentation on the appropriate Transformer
+module for more details.
 
-Instead of redefining the severity for a given Transformer, you can completely
+Instead of redefining the necessity for a given Transformer, you can completely
 disable a Transformer by prepending a '-' to the name of the module in your
 configuration file.  In this manner, the Transformer will never be loaded,
-regardless of the C<-severity> given to the Perl::ToPerl6 constructor.
+regardless of the C<-necessity> given to the Perl::ToPerl6 constructor.
 
 A simple configuration might look like this:
 
@@ -612,20 +619,20 @@ A simple configuration might look like this:
     # I think these are really important, so always load them
 
     [TestingAndDebugging::RequireUseStrict]
-    severity = 5
+    necessity = 5
 
     [TestingAndDebugging::RequireUseWarnings]
-    severity = 5
+    necessity = 5
 
     #--------------------------------------------------------------
     # I think these are less important, so only load when asked
 
     [Variables::ProhibitPackageVars]
-    severity = 2
+    necessity = 2
 
     [ControlStructures::ProhibitPostfixControls]
     allow = if unless  # My custom configuration
-    severity = cruel   # Same as "severity = 2"
+    necessity = cruel   # Same as "necessity = 2"
 
     #--------------------------------------------------------------
     # Give these transformers a custom theme.  I can activate just
@@ -644,7 +651,7 @@ A simple configuration might look like this:
     [-ValuesAndExpressions::ProhibitMagicNumbers]
 
     #--------------------------------------------------------------
-    # For all other Transformers, I accept the default severity,
+    # For all other Transformers, I accept the default necessity,
     # so no additional configuration is required for them.
 
 For additional configuration examples, see the F<perlmogrifyrc> file that is
@@ -896,8 +903,6 @@ Perl::ToPerl6::Transformer, please submit them at L<https://github.com/Perl-ToPe
 
 Adam Kennedy - For creating L<PPI>, the heart and soul of L<Perl::ToPerl6>.
 
-Damian Conway - For writing B<Perl Best Practices>, finally :)
-
 Chris Dolan - For contributing the best features and Transformer modules.
 
 Andy Lester - Wise sage and master of all-things-testing.
@@ -905,8 +910,6 @@ Andy Lester - Wise sage and master of all-things-testing.
 Elliot Shank - The self-proclaimed quality freak.
 
 Giuseppe Maxia - For all the great ideas and positive encouragement.
-
-and Sharon, my wife - For putting up with my all-night code sessions.
 
 Thanks also to the Perl Foundation for providing a grant to support Chris
 Dolan's project to implement twenty PBP transformers.

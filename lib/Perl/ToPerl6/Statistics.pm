@@ -6,12 +6,6 @@ use warnings;
 
 use English qw(-no_match_vars);
 
-use Perl::ToPerl6::Utils::McCabe qw{ calculate_mccabe_of_sub };
-
-#-----------------------------------------------------------------------------
-
-our $VERSION = '0.03';
-
 #-----------------------------------------------------------------------------
 
 sub new {
@@ -23,13 +17,8 @@ sub new {
     $self->{_subs} = 0;
     $self->{_statements} = 0;
     $self->{_lines} = 0;
-    $self->{_lines_of_blank} = 0;
-    $self->{_lines_of_comment} = 0;
-    $self->{_lines_of_data} = 0;
-    $self->{_lines_of_perl} = 0;
-    $self->{_lines_of_pod} = 0;
     $self->{_transformations_by_transformer} = {};
-    $self->{_transformations_by_severity} = {};
+    $self->{_transformations_by_necessity} = {};
     $self->{_total_transformations} = 0;
 
     return $self;
@@ -46,7 +35,6 @@ sub accumulate {
     if ($subs) {
         foreach my $sub ( @{$subs} ) {
             $self->{_subs}++;
-            $self->{_subs_total_mccabe} += calculate_mccabe_of_sub( $sub );
         }
     }
 
@@ -61,26 +49,18 @@ sub accumulate {
         foreach ( @lines ) {
             if ( q{=} eq substr $_, 0, 1 ) {
                 $in_pod = not m/ \A \s* =cut \b /smx;
-                $self->{_lines_of_pod}++;
             } elsif ( $in_pod ) {
-                $self->{_lines_of_pod}++;
             } elsif ( q{__END__} eq $_ || q{__DATA__} eq $_ ) {
                 $in_data = 1;
-                $self->{_lines_of_perl}++;
             } elsif ( $in_data ) {
-                $self->{_lines_of_data}++;
             } elsif ( m/ \A \s* \# /smx ) {
-                $self->{_lines_of_comment}++;
-            } elsif ( m/ \A \s* \z /smx ) {
-                $self->{_lines_of_blank}++;
             } else {
-                $self->{_lines_of_perl}++;
             }
         }
     }
 
     foreach my $transformation ( @{ $transformations } ) {
-        $self->{_transformations_by_severity}->{ $transformation->severity() }++;
+        $self->{_transformations_by_necessity}->{ $transformation->necessity() }++;
         $self->{_transformations_by_transformer}->{ $transformation->transformer() }++;
         $self->{_total_transformations}++;
     }
@@ -122,58 +102,10 @@ sub lines {
 
 #-----------------------------------------------------------------------------
 
-sub lines_of_blank {
+sub transformations_by_necessity {
     my ( $self ) = @_;
 
-    return $self->{_lines_of_blank};
-}
-
-#-----------------------------------------------------------------------------
-
-sub lines_of_comment {
-    my ( $self ) = @_;
-
-    return $self->{_lines_of_comment};
-}
-
-#-----------------------------------------------------------------------------
-
-sub lines_of_data {
-    my ( $self ) = @_;
-
-    return $self->{_lines_of_data};
-}
-
-#-----------------------------------------------------------------------------
-
-sub lines_of_perl {
-    my ( $self ) = @_;
-
-    return $self->{_lines_of_perl};
-}
-
-#-----------------------------------------------------------------------------
-
-sub lines_of_pod {
-    my ( $self ) = @_;
-
-    return $self->{_lines_of_pod};
-}
-
-#-----------------------------------------------------------------------------
-
-sub _subs_total_mccabe {
-    my ( $self ) = @_;
-
-    return $self->{_subs_total_mccabe};
-}
-
-#-----------------------------------------------------------------------------
-
-sub transformations_by_severity {
-    my ( $self ) = @_;
-
-    return $self->{_transformations_by_severity};
+    return $self->{_transformations_by_necessity};
 }
 
 #-----------------------------------------------------------------------------
@@ -201,14 +133,6 @@ sub statements_other_than_subs {
 }
 
 #-----------------------------------------------------------------------------
-
-sub average_sub_mccabe {
-    my ( $self ) = @_;
-
-    return if $self->subs() == 0;
-
-    return $self->_subs_total_mccabe() / $self->subs();
-}
 
 #-----------------------------------------------------------------------------
 
@@ -251,8 +175,6 @@ __END__
 #-----------------------------------------------------------------------------
 
 =pod
-
-=for stopwords McCabe
 
 =head1 NAME
 
@@ -307,41 +229,10 @@ The total number of statements analyzed by this ToPerl6.
 The total number of lines of code analyzed by this ToPerl6.
 
 
-=item C<lines_of_blank()>
+=item C<transformations_by_necessity()>
 
-The total number of blank lines analyzed by this ToPerl6. This includes only
-blank lines in code, not POD or data.
-
-
-=item C<lines_of_comment()>
-
-The total number of comment lines analyzed by this ToPerl6. This includes only
-lines whose first non-whitespace character is C<#>.
-
-
-=item C<lines_of_data()>
-
-The total number of lines of data section analyzed by this ToPerl6, not
-counting the C<__END__> or C<__DATA__> line. POD in a data section is counted
-as POD, not data.
-
-
-=item C<lines_of_perl()>
-
-The total number of lines of Perl code analyzed by this ToPerl6. Perl appearing
-in the data section is not counted.
-
-
-=item C<lines_of_pod()>
-
-The total number of lines of POD analyzed by this ToPerl6. Pod occurring in a
-data section is counted as POD, not as data.
-
-
-=item C<transformations_by_severity()>
-
-The number of transformations of each severity found by this ToPerl6 as a
-reference to a hash keyed by severity.
+The number of transformations of each necessity found by this ToPerl6 as a
+reference to a hash keyed by necessity.
 
 
 =item C<transformations_by_transformer()>
@@ -359,11 +250,6 @@ The total number of transformations found by this ToPerl6.
 
 The total number of statements minus the number of subroutines.
 Useful because a subroutine is considered a statement by PPI.
-
-
-=item C<average_sub_mccabe()>
-
-The average McCabe score of all scanned subroutines.
 
 
 =item C<transformations_per_file()>

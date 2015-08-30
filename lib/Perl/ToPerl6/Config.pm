@@ -29,11 +29,7 @@ use Perl::ToPerl6::Utils::DataConversion qw< boolean_to_number dor >;
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.03';
-
-#-----------------------------------------------------------------------------
-
-Readonly::Scalar my $SINGLE_POLICY_CONFIG_KEY => 'single-transformer';
+Readonly::Scalar my $SINGLE_TRANSFORMER_CONFIG_KEY => 'single-transformer';
 
 #-----------------------------------------------------------------------------
 # Constructor
@@ -51,9 +47,9 @@ sub new {
 sub _init {
     my ( $self, %args ) = @_;
 
-    # -top or -theme imply that -severity is 1, unless it is already defined
+    # -top or -theme imply that -necessity is 1, unless it is already defined
     if ( defined $args{-top} || defined $args{-theme} ) {
-        $args{-severity} ||= $SEVERITY_LOWEST;
+        $args{-necessity} ||= $NECESSITY_LOWEST;
     }
 
     my $errors = Perl::ToPerl6::Exception::AggregateConfiguration->new();
@@ -77,34 +73,35 @@ sub _init {
         'exclude', $args{-exclude}, $options_processor->exclude(), $errors
     );
     $self->_validate_and_save_regex(
-        $SINGLE_POLICY_CONFIG_KEY,
-        $args{ qq/-$SINGLE_POLICY_CONFIG_KEY/ },
+        $SINGLE_TRANSFORMER_CONFIG_KEY,
+        $args{ qq/-$SINGLE_TRANSFORMER_CONFIG_KEY/ },
         $options_processor->single_transformer(),
         $errors,
     );
-    $self->_validate_and_save_color_severity(
-        'color_severity_highest', $args{'-color-severity-highest'},
-        $options_processor->color_severity_highest(), $errors
+    $self->_validate_and_save_color_necessity(
+        'color_necessity_highest', $args{'-color-necessity-highest'},
+        $options_processor->color_necessity_highest(), $errors
     );
-    $self->_validate_and_save_color_severity(
-        'color_severity_high', $args{'-color-severity-high'},
-        $options_processor->color_severity_high(), $errors
+    $self->_validate_and_save_color_necessity(
+        'color_necessity_high', $args{'-color-necessity-high'},
+        $options_processor->color_necessity_high(), $errors
     );
-    $self->_validate_and_save_color_severity(
-        'color_severity_medium', $args{'-color-severity-medium'},
-        $options_processor->color_severity_medium(), $errors
+    $self->_validate_and_save_color_necessity(
+        'color_necessity_medium', $args{'-color-necessity-medium'},
+        $options_processor->color_necessity_medium(), $errors
     );
-    $self->_validate_and_save_color_severity(
-        'color_severity_low', $args{'-color-severity-low'},
-        $options_processor->color_severity_low(), $errors
+    $self->_validate_and_save_color_necessity(
+        'color_necessity_low', $args{'-color-necessity-low'},
+        $options_processor->color_necessity_low(), $errors
     );
-    $self->_validate_and_save_color_severity(
-        'color_severity_lowest', $args{'-color-severity-lowest'},
-        $options_processor->color_severity_lowest(), $errors
+    $self->_validate_and_save_color_necessity(
+        'color_necessity_lowest', $args{'-color-necessity-lowest'},
+        $options_processor->color_necessity_lowest(), $errors
     );
 
     $self->_validate_and_save_verbosity($args{-verbose}, $errors);
-    $self->_validate_and_save_severity($args{-severity}, $errors);
+    $self->_validate_and_save_necessity($args{-necessity}, $errors);
+    $self->_validate_and_save_detail($args{-detail}, $errors);
     $self->_validate_and_save_top($args{-top}, $errors);
     $self->_validate_and_save_theme($args{-theme}, $errors);
     $self->_validate_and_save_pager($args{-pager}, $errors);
@@ -114,16 +111,9 @@ sub _init {
     # If given, these options can be true or false (but defined)
     # We normalize these to numeric values by multiplying them by 1;
     $self->{_force} = boolean_to_number( dor( $args{-force}, $options_processor->force() ) );
+    $self->{_in_place}  = boolean_to_number( dor( $args{'-in-place'},  $options_processor->in_place()  ) );
     $self->{_only}  = boolean_to_number( dor( $args{-only},  $options_processor->only()  ) );
     $self->{_color} = boolean_to_number( dor( $args{-color}, $options_processor->color() ) );
-    $self->{_unsafe_allowed} =
-        boolean_to_number(
-            dor( $args{'-allow-unsafe'}, $options_processor->allow_unsafe()
-        ) );
-    $self->{_mogrification_fatal} =
-        boolean_to_number(
-            dor( $args{'-mogrification-fatal'}, $options_processor->mogrification_fatal() )
-        );
 
 
     # Construct a Factory with the Profile
@@ -223,9 +213,6 @@ sub _load_transformers {
             next;
         }
 
-        # Always exclude unsafe transformers, unless instructed not to
-        next if not ( $transformer->is_safe() or $self->unsafe_allowed() );
-
         # To load, or not to load -- that is the question.
         my $load_me = $self->only() ? $FALSE : $TRUE;
 
@@ -277,9 +264,9 @@ sub _transformer_is_thematic {
 
 sub _transformer_is_unimportant {
     my ($self, $transformer) = @_;
-    my $transformer_severity = $transformer->get_severity();
-    my $min_severity    = $self->{_severity};
-    return $transformer_severity < $min_severity;
+    my $transformer_necessity = $transformer->get_necessity();
+    my $min_necessity    = $self->{_necessity};
+    return $transformer_necessity < $min_necessity;
 }
 
 #-----------------------------------------------------------------------------
@@ -342,7 +329,7 @@ sub _add_single_transformer_exception_to {
 
     $errors->add_exception(
         $self->_new_global_value_exception(
-            option_name     => $SINGLE_POLICY_CONFIG_KEY,
+            option_name     => $SINGLE_TRANSFORMER_CONFIG_KEY,
             option_value    => $patterns,
             message_suffix  => $message_suffix,
         )
@@ -499,58 +486,58 @@ sub _validate_and_save_verbosity {
 
 #-----------------------------------------------------------------------------
 
-sub _validate_and_save_severity {
+sub _validate_and_save_necessity {
     my ($self, $args_value, $errors) = @_;
 
     my $option_name;
     my $source;
-    my $severity;
+    my $necessity;
 
     if ($args_value) {
-        $option_name = '-severity';
-        $severity = $args_value;
+        $option_name = '-necessity';
+        $necessity = $args_value;
     }
     else {
-        $option_name = 'severity';
+        $option_name = 'necessity';
 
         my $profile = $self->_profile();
         $source = $profile->source();
-        $severity = $profile->options_processor()->severity();
+        $necessity = $profile->options_processor()->necessity();
     }
 
-    if ( is_integer($severity) ) {
+    if ( is_integer($necessity) ) {
         if (
-            $severity >= $SEVERITY_LOWEST and $severity <= $SEVERITY_HIGHEST
+            $necessity >= $NECESSITY_LOWEST and $necessity <= $NECESSITY_HIGHEST
         ) {
-            $self->{_severity} = $severity;
+            $self->{_necessity} = $necessity;
         }
         else {
             $errors->add_exception(
                 $self->_new_global_value_exception(
                     option_name     => $option_name,
-                    option_value    => $severity,
+                    option_value    => $necessity,
                     source          => $source,
                     message_suffix  =>
-                        "is not between $SEVERITY_LOWEST (low) and $SEVERITY_HIGHEST (high).",
+                        "is not between $NECESSITY_LOWEST (low) and $NECESSITY_HIGHEST (high).",
                 )
             );
         }
     }
-    elsif ( not any { $_ eq lc $severity } @SEVERITY_NAMES ) {
+    elsif ( not any { $_ eq lc $necessity } @NECESSITY_NAMES ) {
         $errors->add_exception(
             $self->_new_global_value_exception(
                 option_name     => $option_name,
-                option_value    => $severity,
+                option_value    => $necessity,
                 source          => $source,
                 message_suffix  =>
-                    q{is not one of the valid severity names: "}
-                        . join (q{", "}, @SEVERITY_NAMES)
+                    q{is not one of the valid necessity names: "}
+                        . join (q{", "}, @NECESSITY_NAMES)
                         . q{".},
             )
         );
     }
     else {
-        $self->{_severity} = severity_to_number($severity);
+        $self->{_necessity} = necessity_to_number($necessity);
     }
 
     return;
@@ -689,25 +676,84 @@ sub _validate_and_save_pager {
 
 #-----------------------------------------------------------------------------
 
-sub _validate_and_save_color_severity {
+sub _validate_and_save_detail {
+    my ($self, $args_value, $errors) = @_;
+
+    my $option_name;
+    my $source;
+    my $detail;
+
+    if ($args_value) {
+        $option_name = '-detail';
+        $detail = $args_value;
+    }
+    else {
+        $option_name = 'detail';
+
+        my $profile = $self->_profile();
+        $source = $profile->source();
+        $detail = $profile->options_processor()->detail();
+    }
+
+    if ( is_integer($detail) ) {
+        if (
+            $detail >= $NECESSITY_LOWEST and $detail <= $NECESSITY_HIGHEST
+        ) {
+            $self->{_detail} = $detail;
+        }
+        else {
+            $errors->add_exception(
+                $self->_new_global_value_exception(
+                    option_name     => $option_name,
+                    option_value    => $detail,
+                    source          => $source,
+                    message_suffix  =>
+                        "is not between $NECESSITY_LOWEST (low) and $NECESSITY_HIGHEST (high).",
+                )
+            );
+        }
+    }
+    elsif ( not any { $_ eq lc $detail } @NECESSITY_NAMES ) {
+        $errors->add_exception(
+            $self->_new_global_value_exception(
+                option_name     => $option_name,
+                option_value    => $detail,
+                source          => $source,
+                message_suffix  =>
+                    q{is not one of the valid necessity names: "}
+                        . join (q{", "}, @NECESSITY_NAMES)
+                        . q{".},
+            )
+        );
+    }
+    else {
+        $self->{_detail} = necessity_to_number($detail);
+    }
+
+    return;
+}
+
+#-----------------------------------------------------------------------------
+
+sub _validate_and_save_color_necessity {
     my ($self, $option_name, $args_value, $default_value, $errors) = @_;
 
     my $source;
-    my $color_severity;
+    my $color_necessity;
     my $full_option_name;
 
     if (defined $args_value) {
         $full_option_name = "-$option_name";
-        $color_severity = lc $args_value;
+        $color_necessity = lc $args_value;
     }
     else {
         $full_option_name = $option_name;
         $source = $self->_profile()->source();
-        $color_severity = lc $default_value;
+        $color_necessity = lc $default_value;
     }
-    $color_severity =~ s/ \s+ / /xmsg;
-    $color_severity =~ s/ \A\s+ //xms;
-    $color_severity =~ s/ \s+\z //xms;
+    $color_necessity =~ s/ \s+ / /xmsg;
+    $color_necessity =~ s/ \A\s+ //xms;
+    $color_necessity =~ s/ \s+\z //xms;
     $full_option_name =~ s/ _ /-/xmsg;
 
     # Should we really be validating this?
@@ -720,7 +766,7 @@ sub _validate_and_save_color_severity {
         }
     ) {
         $found_errors =
-            not Term::ANSIColor::colorvalid( words_from_string($color_severity) );
+            not Term::ANSIColor::colorvalid( words_from_string($color_necessity) );
     }
 
     # If we do not have Term::ANSIColor we can not validate, but we store the
@@ -730,7 +776,7 @@ sub _validate_and_save_color_severity {
         $errors->add_exception(
             $self->_new_global_value_exception(
                 option_name     => $full_option_name,
-                option_value    => $color_severity,
+                option_value    => $color_necessity,
                 source          => $source,
                 message_suffix  => 'is not valid.',
             )
@@ -740,7 +786,7 @@ sub _validate_and_save_color_severity {
         my $option_key = $option_name;
         $option_key =~ s/ - /_/xmsg;
 
-        $self->{"_$option_key"} = $color_severity;
+        $self->{"_$option_key"} = $color_necessity;
     }
 
     return;
@@ -796,6 +842,13 @@ sub exclude {
 
 #-----------------------------------------------------------------------------
 
+sub detail {
+    my ($self) = @_;
+    return $self->{_detail};
+}
+
+#-----------------------------------------------------------------------------
+
 sub force {
     my ($self) = @_;
     return $self->{_force};
@@ -806,6 +859,13 @@ sub force {
 sub include {
     my ($self) = @_;
     return @{ $self->{_include} };
+}
+
+#-----------------------------------------------------------------------------
+
+sub in_place {
+    my ($self) = @_;
+    return $self->{_in_place};
 }
 
 #-----------------------------------------------------------------------------
@@ -824,9 +884,9 @@ sub profile_strictness {
 
 #-----------------------------------------------------------------------------
 
-sub severity {
+sub necessity {
     my ($self) = @_;
-    return $self->{_severity};
+    return $self->{_necessity};
 }
 
 #-----------------------------------------------------------------------------
@@ -873,57 +933,43 @@ sub pager  {
 
 #-----------------------------------------------------------------------------
 
-sub unsafe_allowed {
-    my ($self) = @_;
-    return $self->{_unsafe_allowed};
-}
-
-#-----------------------------------------------------------------------------
-
-sub mogrification_fatal {
-    my ($self) = @_;
-    return $self->{_mogrification_fatal};
-}
-
-#-----------------------------------------------------------------------------
-
 sub site_transformer_names {
     return Perl::ToPerl6::TransformerFactory::site_transformer_names();
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_highest {
+sub color_necessity_highest {
     my ($self) = @_;
-    return $self->{_color_severity_highest};
+    return $self->{_color_necessity_highest};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_high {
+sub color_necessity_high {
     my ($self) = @_;
-    return $self->{_color_severity_high};
+    return $self->{_color_necessity_high};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_medium {
+sub color_necessity_medium {
     my ($self) = @_;
-    return $self->{_color_severity_medium};
+    return $self->{_color_necessity_medium};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_low {
+sub color_necessity_low {
     my ($self) = @_;
-    return $self->{_color_severity_low};
+    return $self->{_color_necessity_low};
 }
 
 #-----------------------------------------------------------------------------
 
-sub color_severity_lowest {
+sub color_necessity_lowest {
     my ($self) = @_;
-    return $self->{_color_severity_lowest};
+    return $self->{_color_necessity_lowest};
 }
 
 #-----------------------------------------------------------------------------
@@ -1037,9 +1083,19 @@ Returns the value of the C<-exclude> attribute for this Config.
 Returns the value of the C<-include> attribute for this Config.
 
 
+=item C< detail() >
+
+Returns the value of the C<-detail> attribute for this Config.
+
+
 =item C< force() >
 
 Returns the value of the C<-force> attribute for this Config.
+
+
+=item C< in_place() >
+
+Returns the value of the C<-in-place> attribute for this Config.
 
 
 =item C< only() >
@@ -1053,9 +1109,9 @@ Returns the value of the C<-profile-strictness> attribute for this
 Config.
 
 
-=item C< severity() >
+=item C< necessity() >
 
-Returns the value of the C<-severity> attribute for this Config.
+Returns the value of the C<-necessity> attribute for this Config.
 
 
 =item C< single_transformer() >
@@ -1089,43 +1145,33 @@ Returns the value of the C<-color> attribute for this Config.
 Returns the value of the C<-pager> attribute for this Config.
 
 
-=item C< unsafe_allowed() >
+=item C< color_necessity_highest() >
 
-Returns the value of the C<-allow-unsafe> attribute for this Config.
-
-
-=item C< mogrification_fatal() >
-
-Returns the value of the C<-mogrifysm-fatal> attribute for this Config.
-
-
-=item C< color_severity_highest() >
-
-Returns the value of the C<-color-severity-highest> attribute for this
+Returns the value of the C<-color-necessity-highest> attribute for this
 Config.
 
 
-=item C< color_severity_high() >
+=item C< color_necessity_high() >
 
-Returns the value of the C<-color-severity-high> attribute for this
+Returns the value of the C<-color-necessity-high> attribute for this
 Config.
 
 
-=item C< color_severity_medium() >
+=item C< color_necessity_medium() >
 
-Returns the value of the C<-color-severity-medium> attribute for this
+Returns the value of the C<-color-necessity-medium> attribute for this
 Config.
 
 
-=item C< color_severity_low() >
+=item C< color_necessity_low() >
 
-Returns the value of the C<-color-severity-low> attribute for this
+Returns the value of the C<-color-necessity-low> attribute for this
 Config.
 
 
-=item C< color_severity_lowest() >
+=item C< color_necessity_lowest() >
 
-Returns the value of the C<-color-severity-lowest> attribute for this
+Returns the value of the C<-color-necessity-lowest> attribute for this
 Config.
 
 =item C< program_extensions() >
@@ -1184,8 +1230,10 @@ named block.>  For example, putting any or all of these at the top of
 your configuration file will set the default value for the
 corresponding Perl::ToPerl6 constructor argument.
 
-    severity  = 3                                     #Integer from 1 to 5
+    necessity  = 3                                     #Integer from 1 to 5
+    in_place  = 0                                     #Zero or One
     only      = 1                                     #Zero or One
+    detail    = 0                                     #Integer from 1 to 5
     force     = 0                                     #Zero or One
     verbose   = 4                                     #Integer or format spec
     top       = 50                                    #A positive integer
@@ -1193,19 +1241,18 @@ corresponding Perl::ToPerl6 constructor argument.
     include   = NamingConventions ClassHierarchies    #Space-delimited list
     exclude   = Variables  Modules::RequirePackage    #Space-delimited list
     color     = 1                                     #Zero or One
-    allow_unsafe = 1                                  #Zero or One
-    color-severity-highest = bold red                 #Term::ANSIColor
-    color-severity-high = magenta                     #Term::ANSIColor
-    color-severity-medium =                           #no coloring
-    color-severity-low =                              #no coloring
-    color-severity-lowest =                           #no coloring
+    color-necessity-highest = bold red                #Term::ANSIColor
+    color-necessity-high = magenta                    #Term::ANSIColor
+    color-necessity-medium =                          #no coloring
+    color-necessity-low =                             #no coloring
+    color-necessity-lowest =                          #no coloring
     program-extensions =                              #Space-delimited list
 
 The remainder of the configuration file is a series of blocks like
 this:
 
     [Perl::ToPerl6::Transformer::Category::TransformerName]
-    severity = 1
+    necessity = 1
     set_themes = foo bar
     add_themes = baz
     arg1 = value1
@@ -1218,11 +1265,11 @@ table of contents in Damian Conway's book B<Perl Best Practices>. For
 brevity, you can omit the C<'Perl::ToPerl6::Transformer'> part of the module
 name.
 
-C<severity> is the level of importance you wish to assign to the
-Transformer.  All Transformer modules are defined with a default severity value
+C<necessity> is the level of importance you wish to assign to the
+Transformer.  All Transformer modules are defined with a default necessity value
 ranging from 1 (least severe) to 5 (most severe).  However, you may
-disagree with the default severity and choose to give it a higher or
-lower severity, based on your own coding philosophy.
+disagree with the default necessity and choose to give it a higher or
+lower necessity, based on your own coding philosophy.
 
 The remaining key-value pairs are configuration parameters that will
 be passed into the constructor of that Transformer.  The constructors for
@@ -1230,10 +1277,10 @@ most Transformer modules do not support arguments, and those that do should
 have reasonable defaults.  See the documentation on the appropriate
 Transformer module for more details.
 
-Instead of redefining the severity for a given Transformer, you can
+Instead of redefining the necessity for a given Transformer, you can
 completely disable a Transformer by prepending a '-' to the name of the
 module in your configuration file.  In this manner, the Transformer will
-never be loaded, regardless of the C<-severity> given to the
+never be loaded, regardless of the C<-necessity> given to the
 Perl::ToPerl6::Config constructor.
 
 A simple configuration might look like this:
@@ -1242,20 +1289,20 @@ A simple configuration might look like this:
     # I think these are really important, so always load them
 
     [TestingAndDebugging::RequireUseStrict]
-    severity = 5
+    necessity = 5
 
     [TestingAndDebugging::RequireUseWarnings]
-    severity = 5
+    necessity = 5
 
     #--------------------------------------------------------------
     # I think these are less important, so only load when asked
 
     [Variables::ProhibitPackageVars]
-    severity = 2
+    necessity = 2
 
     [ControlStructures::ProhibitPostfixControls]
     allow = if unless  #My custom configuration
-    severity = 2
+    necessity = 2
 
     #--------------------------------------------------------------
     # Give these transformers a custom theme.  I can activate just
@@ -1274,7 +1321,7 @@ A simple configuration might look like this:
     [-ValuesAndExpressions::ProhibitMagicNumbers]
 
     #--------------------------------------------------------------
-    # For all other Transformers, I accept the default severity, theme
+    # For all other Transformers, I accept the default necessity, theme
     # and other parameters, so no additional configuration is
     # required for them.
 
@@ -1290,7 +1337,7 @@ L<Perl::ToPerl6::TransformerSummary|Perl::ToPerl6::TransformerSummary> and in mo
 detail in the individual modules themselves.
 
 
-=head1 POLICY THEMES
+=head1 TRANSFORMER THEMES
 
 Each Transformer is defined with one or more "themes".  Themes can be used
 to create arbitrary groups of Transformers.  They are intended to provide

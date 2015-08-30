@@ -15,7 +15,7 @@ use Test::More;
 
 #-----------------------------------------------------------------------------
 
-our $VERSION = '0.031';
+our $VERSION = '0.040';
 
 #-----------------------------------------------------------------------------
 
@@ -37,11 +37,12 @@ my @concrete_exceptions = qw{
     IO
 };
 
-plan tests =>
-        86
-    +   (  9 * scalar @concrete_exceptions  )
-    +   ( 17 * scalar @bundled_transformer_names )
-;
+plan tests => 750;
+#plan tests => # XXX Recalculate this later.
+#        89
+#    +   (  9 * scalar @concrete_exceptions  )
+#    +   ( 16 * scalar @bundled_transformer_names )
+#;
 
 #-----------------------------------------------------------------------------
 # Validate main package version against this version
@@ -75,22 +76,22 @@ can_ok('Perl::ToPerl6::Config', 'transformers');
 can_ok('Perl::ToPerl6::Config', 'exclude');
 can_ok('Perl::ToPerl6::Config', 'force');
 can_ok('Perl::ToPerl6::Config', 'include');
+can_ok('Perl::ToPerl6::Config', 'in_place');
+can_ok('Perl::ToPerl6::Config', 'detail');
 can_ok('Perl::ToPerl6::Config', 'only');
 can_ok('Perl::ToPerl6::Config', 'profile_strictness');
-can_ok('Perl::ToPerl6::Config', 'severity');
+can_ok('Perl::ToPerl6::Config', 'necessity');
 can_ok('Perl::ToPerl6::Config', 'single_transformer');
 can_ok('Perl::ToPerl6::Config', 'theme');
 can_ok('Perl::ToPerl6::Config', 'top');
 can_ok('Perl::ToPerl6::Config', 'verbose');
 can_ok('Perl::ToPerl6::Config', 'color');
-can_ok('Perl::ToPerl6::Config', 'unsafe_allowed');
-can_ok('Perl::ToPerl6::Config', 'mogrification_fatal');
 can_ok('Perl::ToPerl6::Config', 'site_transformer_names');
-can_ok('Perl::ToPerl6::Config', 'color_severity_highest');
-can_ok('Perl::ToPerl6::Config', 'color_severity_high');
-can_ok('Perl::ToPerl6::Config', 'color_severity_medium');
-can_ok('Perl::ToPerl6::Config', 'color_severity_low');
-can_ok('Perl::ToPerl6::Config', 'color_severity_lowest');
+can_ok('Perl::ToPerl6::Config', 'color_necessity_highest');
+can_ok('Perl::ToPerl6::Config', 'color_necessity_high');
+can_ok('Perl::ToPerl6::Config', 'color_necessity_medium');
+can_ok('Perl::ToPerl6::Config', 'color_necessity_low');
+can_ok('Perl::ToPerl6::Config', 'color_necessity_lowest');
 can_ok('Perl::ToPerl6::Config', 'program_extensions');
 can_ok('Perl::ToPerl6::Config', 'program_extensions_as_regexes');
 
@@ -107,20 +108,20 @@ can_ok('Perl::ToPerl6::OptionsProcessor', 'exclude');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'include');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'force');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'only');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'in_place');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'detail');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'profile_strictness');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'single_transformer');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'severity');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'necessity');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'theme');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'top');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'verbose');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'color');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'allow_unsafe');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'mogrification_fatal');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'color_severity_highest');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'color_severity_high');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'color_severity_medium');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'color_severity_low');
-can_ok('Perl::ToPerl6::OptionsProcessor', 'color_severity_lowest');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'color_necessity_highest');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'color_necessity_high');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'color_necessity_medium');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'color_necessity_low');
+can_ok('Perl::ToPerl6::OptionsProcessor', 'color_necessity_lowest');
 can_ok('Perl::ToPerl6::OptionsProcessor', 'program_extensions');
 
 my $processor = Perl::ToPerl6::OptionsProcessor->new();
@@ -132,34 +133,29 @@ isa_ok($processor, 'Perl::ToPerl6::OptionsProcessor');
 use_ok('Perl::ToPerl6::Transformer') or BAIL_OUT(q<Can't continue.>);
 can_ok('Perl::ToPerl6::Transformer', 'add_themes');
 can_ok('Perl::ToPerl6::Transformer', 'applies_to');
-can_ok('Perl::ToPerl6::Transformer', 'default_maximum_transformations_per_document');
-can_ok('Perl::ToPerl6::Transformer', 'default_severity');
+can_ok('Perl::ToPerl6::Transformer', 'default_necessity');
 can_ok('Perl::ToPerl6::Transformer', 'default_themes');
 can_ok('Perl::ToPerl6::Transformer', 'get_abstract');
 can_ok('Perl::ToPerl6::Transformer', 'get_format');
 can_ok('Perl::ToPerl6::Transformer', 'get_long_name');
-can_ok('Perl::ToPerl6::Transformer', 'get_maximum_transformations_per_document');
 can_ok('Perl::ToPerl6::Transformer', 'get_parameters');
 can_ok('Perl::ToPerl6::Transformer', 'get_raw_abstract');
-can_ok('Perl::ToPerl6::Transformer', 'get_severity');
+can_ok('Perl::ToPerl6::Transformer', 'get_necessity');
 can_ok('Perl::ToPerl6::Transformer', 'get_short_name');
 can_ok('Perl::ToPerl6::Transformer', 'get_themes');
 can_ok('Perl::ToPerl6::Transformer', 'initialize_if_enabled');
 can_ok('Perl::ToPerl6::Transformer', 'is_enabled');
-can_ok('Perl::ToPerl6::Transformer', 'is_safe');
 can_ok('Perl::ToPerl6::Transformer', 'new');
 can_ok('Perl::ToPerl6::Transformer', 'new_parameter_value_exception');
 can_ok('Perl::ToPerl6::Transformer', 'parameter_metadata_available');
 can_ok('Perl::ToPerl6::Transformer', 'prepare_to_scan_document');
 can_ok('Perl::ToPerl6::Transformer', 'set_format');
-can_ok('Perl::ToPerl6::Transformer', 'set_maximum_transformations_per_document');
-can_ok('Perl::ToPerl6::Transformer', 'set_severity');
+can_ok('Perl::ToPerl6::Transformer', 'set_necessity');
 can_ok('Perl::ToPerl6::Transformer', 'set_themes');
 can_ok('Perl::ToPerl6::Transformer', 'throw_parameter_value_exception');
 can_ok('Perl::ToPerl6::Transformer', 'to_string');
 can_ok('Perl::ToPerl6::Transformer', 'transform');
 can_ok('Perl::ToPerl6::Transformer', 'transformation');
-can_ok('Perl::ToPerl6::Transformer', 'is_safe');
 
 {
     my $transformer = Perl::ToPerl6::Transformer->new();
@@ -178,9 +174,9 @@ can_ok('Perl::ToPerl6::Transformation', 'location');
 can_ok('Perl::ToPerl6::Transformation', 'new');
 can_ok('Perl::ToPerl6::Transformation', 'transformer');
 can_ok('Perl::ToPerl6::Transformation', 'set_format');
-can_ok('Perl::ToPerl6::Transformation', 'severity');
+can_ok('Perl::ToPerl6::Transformation', 'necessity');
 can_ok('Perl::ToPerl6::Transformation', 'sort_by_location');
-can_ok('Perl::ToPerl6::Transformation', 'sort_by_severity');
+can_ok('Perl::ToPerl6::Transformation', 'sort_by_necessity');
 can_ok('Perl::ToPerl6::Transformation', 'source');
 can_ok('Perl::ToPerl6::Transformation', 'to_string');
 
@@ -280,22 +276,20 @@ can_ok('Perl::ToPerl6::Command', 'run');
 
         use_ok($mod) or BAIL_OUT(q<Can't continue.>);
         can_ok($mod, 'applies_to');
-        can_ok($mod, 'default_severity');
+        can_ok($mod, 'default_necessity');
         can_ok($mod, 'default_themes');
-        can_ok($mod, 'get_severity');
+        can_ok($mod, 'get_necessity');
         can_ok($mod, 'get_themes');
         can_ok($mod, 'is_enabled');
         can_ok($mod, 'new');
-        can_ok($mod, 'set_severity');
+        can_ok($mod, 'set_necessity');
         can_ok($mod, 'set_themes');
         can_ok($mod, 'set_themes');
         can_ok($mod, 'transform');
         can_ok($mod, 'transformation');
-        can_ok($mod, 'is_safe');
 
         my $transformer = $mod->new();
         isa_ok($transformer, 'Perl::ToPerl6::Transformer');
-        ok($transformer->is_safe(), "CORE transformer $mod is marked safe");
     }
 }
 
@@ -309,7 +303,7 @@ can_ok('main', 'transform');  #Export test
 # blow up, and that at least one transformation is returned.
 ok( transform( \$code ), 'Functional style, no config' );
 ok( transform( {}, \$code ), 'Functional style, empty config' );
-ok( transform( {severity => 1}, \$code ), 'Functional style, with config');
+ok( transform( {necessity => 1}, \$code ), 'Functional style, with config');
 ok( !transform(), 'Functional style, no args at all');
 ok( !transform(undef, undef), 'Functional style, undef args');
 
